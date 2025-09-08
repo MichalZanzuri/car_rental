@@ -1,6 +1,6 @@
 """
 שרת FastAPI עיקרי למערכת השכרת רכבים
-מממש תבנית CQRS ו-Gateway עם PostgreSQL
+מממש תבנית CQRS ו-Gateway עם PostgreSQL + Trawex API
 """
 
 from fastapi import FastAPI, HTTPException
@@ -13,7 +13,7 @@ import uvicorn
 # יצירת אפליקציית FastAPI
 app = FastAPI(
     title="Car Rental System API",
-    description="מערכת ניהול השכרת רכבים עם PostgreSQL",
+    description="מערכת ניהול השכרת רכבים עם PostgreSQL ו-Trawex API",
     version="1.0.0",
     docs_url="/docs",  # Swagger UI
     redoc_url="/redoc"  # ReDoc
@@ -43,6 +43,15 @@ try:
     print("✅ AI Router נטען בהצלחה")
 except ImportError as e:
     print(f"⚠️ AI Router לא זמין: {e}")
+
+# הוספת Trawex API router
+try:
+    from services.trawex_api import search_external_cars, get_external_locations, test_external_api
+    TRAWEX_AVAILABLE = True
+    print("✅ Trawex API נטען בהצלחה")
+except ImportError as e:
+    TRAWEX_AVAILABLE = False
+    print(f"⚠️ Trawex API לא זמין: {e}")
 
 # הגדרת CORS
 app.add_middleware(
@@ -118,6 +127,13 @@ class CarSearchQuery(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
 
+class ExternalCarSearchQuery(BaseModel):
+    pickup_location: str
+    pickup_date: str  # YYYY-MM-DD
+    return_date: str  # YYYY-MM-DD
+    pickup_time: Optional[str] = "10:00"
+    return_time: Optional[str] = "10:00"
+
 class BookingRequest(BaseModel):
     car_id: int
     customer_name: str
@@ -148,6 +164,7 @@ async def root():
         "message": "🚗 מערכת השכרת רכבים פעילה!",
         "status": "running",
         "database": "PostgreSQL" if DATABASE_AVAILABLE else "Event Store",
+        "external_api": "Trawex" if TRAWEX_AVAILABLE else "Not Available",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -157,10 +174,103 @@ async def health_check():
     return {
         "status": "healthy", 
         "service": "car-rental-api",
-        "database": "PostgreSQL" if DATABASE_AVAILABLE else "Event Store"
+        "database": "PostgreSQL" if DATABASE_AVAILABLE else "Event Store",
+        "external_api": "Trawex" if TRAWEX_AVAILABLE else "Not Available"
     }
 
+# ====================
+# Trawex External API Endpoints
+# ====================
+
+if TRAWEX_AVAILABLE:
+    @app.post("/api/external/cars/search")
+    async def search_external_cars_endpoint(query: ExternalCarSearchQuery):
+        """חיפוש רכבים מ-Trawex API"""
+        try:
+            cars = search_external_cars(
+                query.pickup_location, 
+                query.pickup_date, 
+                query.return_date,
+                query.pickup_time,
+                query.return_time
+            )
+            return {
+                "cars": cars, 
+                "source": "trawex_api", 
+                "count": len(cars),
+                "query": query.dict()
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"שגיאה בחיפוש רכבים חיצוניים: {str(e)}")
+
+    @app.get("/api/external/locations")
+    async def get_external_locations_endpoint(query: str = ""):
+        """קבלת מיקומים מ-Trawex API"""
+        try:
+            locations = get_external_locations(query)
+            return {
+                "locations": locations,
+                "source": "trawex_api",
+                "count": len(locations)
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"שגיאה בקבלת מיקומים: {str(e)}")
+
+    @app.get("/api/external/test")
+    async def test_external_api_endpoint():
+        """בדיקת חיבור ל-Trawex API"""
+        try:
+            is_working = test_external_api()
+            return {
+                "status": "connected" if is_working else "disconnected",
+                "api": "trawex",
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "api": "trawex",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+
+    @app.get("/api/external/combined-search")
+    async def combined_search_cars(
+        pickup_location: str,
+        pickup_date: str,
+        return_date: str,
+        pickup_time: str = "10:00",
+        return_time: str = "10:00"
+    ):
+        """חיפוש משולב - נתונים מקומיים + חיצוניים"""
+        try:
+            # חיפוש בנתונים מקומיים
+            local_query = CarSearchQuery(location=pickup_location)
+            db_service = get_database_service()
+            
+            if DATABASE_AVAILABLE:
+                local_cars = db_service.search_cars({"location": pickup_location})
+            else:
+                all_cars = db_service.get_all_cars()
+                local_cars = [car for car in all_cars if pickup_location.lower() in car.get('location', '').lower()]
+            
+            # חיפוש בנתונים חיצוניים
+            external_cars = search_external_cars(pickup_location, pickup_date, return_date, pickup_time, return_time)
+            
+            return {
+                "local_cars": local_cars,
+                "external_cars": external_cars,
+                "local_count": len(local_cars),
+                "external_count": len(external_cars),
+                "total_count": len(local_cars) + len(external_cars),
+                "sources": ["local_database", "trawex_api"]
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"שגיאה בחיפוש משולב: {str(e)}")
+
+# ====================
 # Query Endpoints (CQRS - Query Side)
+# ====================
 
 @app.get("/api/cars", response_model=List[Car])
 async def get_all_cars():
@@ -320,7 +430,9 @@ async def get_search_analytics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"שגיאה באנליטיקות: {str(e)}")
 
+# ====================
 # Command Endpoints (CQRS - Command Side)
+# ====================
 
 @app.post("/api/bookings")
 async def create_booking(booking: BookingRequest):
@@ -388,17 +500,25 @@ async def create_booking(booking: BookingRequest):
 
 @app.get("/api/database-info")
 async def get_database_info():
-    """מידע על בסיס הנתונים בשימוש"""
+    """מידע על בסיס הנתונים ושירותים חיצוניים"""
     return {
         "database_type": "PostgreSQL" if DATABASE_AVAILABLE else "Event Store",
-        "available": DATABASE_AVAILABLE,
+        "database_available": DATABASE_AVAILABLE,
+        "external_api_available": TRAWEX_AVAILABLE,
+        "external_api_type": "Trawex" if TRAWEX_AVAILABLE else None,
         "connection_status": "connected" if DATABASE_AVAILABLE else "using_fallback",
-        "docker_required": DATABASE_AVAILABLE
+        "docker_required": DATABASE_AVAILABLE,
+        "services": {
+            "local_database": DATABASE_AVAILABLE,
+            "external_api": TRAWEX_AVAILABLE,
+            "ai_service": True  # תמיד זמין
+        }
     }
 
 if __name__ == "__main__":
     print("🚗 מפעיל שרת השכרת רכבים...")
     print(f"📊 בסיס נתונים: {'PostgreSQL' if DATABASE_AVAILABLE else 'Event Store'}")
+    print(f"🌐 API חיצוני: {'Trawex זמין' if TRAWEX_AVAILABLE else 'לא זמין'}")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

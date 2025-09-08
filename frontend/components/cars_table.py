@@ -1,6 +1,5 @@
 """
-רכיב הצגת רכבים עם פאנל פרטים וחשבונית - גרסה סופית
-עם פילטרים קומפקטיים וטבלה גדולה
+רכיב הצגת רכבים עם טבלה משולבת אחת
 """
 
 import requests
@@ -11,21 +10,22 @@ from typing import Dict, Optional, List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QLineEdit, QComboBox, QGroupBox, QGridLayout,
-    QTextEdit, QFrame, QScrollArea, QMessageBox, QDialog, QDateEdit,
-    QSpinBox, QFormLayout, QDialogButtonBox
+    QTextEdit, QFrame, QMessageBox, QDialog, QDateEdit, QSpinBox, 
+    QFormLayout, QDialogButtonBox, QTabWidget, QProgressBar, QSplitter
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QDate
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import Qt, QTimer, Signal, QDate, QThread
+from PySide6.QtGui import QFont, QColor
 
 API_BASE_URL = "http://localhost:8000"
 
+# ===========================================
+# דיאלוג הזמנה
+# ===========================================
+
 class BookingDialog(QDialog):
-    """דיאלוג הזמנת רכב עם חשבונית"""
-    
     def __init__(self, car_data: Dict, parent=None):
         super().__init__(parent)
         self.car_data = car_data
-        self.booking_data = {}
         self.setup_ui()
     
     def setup_ui(self):
@@ -35,11 +35,10 @@ class BookingDialog(QDialog):
         
         layout = QVBoxLayout()
         
-        # כותרת
         title = QLabel("חשבונית הזמנת רכב")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #2E86C1; padding: 15px; background: #F8F9FA; border-radius: 8px; margin-bottom: 10px;")
+        title.setStyleSheet("color: #2E86C1; padding: 15px; background: #F8F9FA; border-radius: 8px;")
         layout.addWidget(title)
         
         # פרטי הרכב
@@ -48,57 +47,18 @@ class BookingDialog(QDialog):
         
         car_layout.addWidget(QLabel("יצרן:"), 0, 0)
         car_layout.addWidget(QLabel(str(self.car_data.get("make", ""))), 0, 1)
-        
         car_layout.addWidget(QLabel("דגם:"), 1, 0)
         car_layout.addWidget(QLabel(str(self.car_data.get("model", ""))), 1, 1)
+        car_layout.addWidget(QLabel("מחיר יומי:"), 2, 0)
+        car_layout.addWidget(QLabel(f"{self.car_data.get('daily_rate', 0)} ₪"), 2, 1)
         
-        car_layout.addWidget(QLabel("שנה:"), 2, 0)
-        car_layout.addWidget(QLabel(str(self.car_data.get("year", ""))), 2, 1)
-        
-        car_layout.addWidget(QLabel("מחיר יומי:"), 3, 0)
-        daily_rate = self.car_data.get("daily_rate", 0)
-        car_layout.addWidget(QLabel(f"{daily_rate} ₪"), 3, 1)
+        # הוספת ספק אם קיים
+        if self.car_data.get('supplier'):
+            car_layout.addWidget(QLabel("ספק:"), 3, 0)
+            car_layout.addWidget(QLabel(str(self.car_data.get("supplier", ""))), 3, 1)
         
         car_group.setLayout(car_layout)
         layout.addWidget(car_group)
-        
-        # פרטי ההזמנה
-        booking_group = QGroupBox("פרטי ההזמנה")
-        booking_layout = QFormLayout()
-        
-        # תאריכים
-        self.start_date = QDateEdit()
-        self.start_date.setDate(QDate.currentDate())
-        self.start_date.setMinimumDate(QDate.currentDate())
-        booking_layout.addRow("תאריך תחילה:", self.start_date)
-        
-        self.end_date = QDateEdit()
-        self.end_date.setDate(QDate.currentDate().addDays(1))
-        self.end_date.setMinimumDate(QDate.currentDate().addDays(1))
-        booking_layout.addRow("תאריך סיום:", self.end_date)
-        
-        # מיקומים
-        self.pickup_location = QLineEdit()
-        self.pickup_location.setText(str(self.car_data.get("location", "")))
-        booking_layout.addRow("מיקום איסוף:", self.pickup_location)
-        
-        self.return_location = QLineEdit()
-        self.return_location.setText(str(self.car_data.get("location", "")))
-        booking_layout.addRow("מיקום החזרה:", self.return_location)
-        
-        # ביטוח
-        self.insurance_type = QComboBox()
-        self.insurance_type.addItems(["בסיסי (חובה)", "מורחב (+50₪/יום)", "מקיף (+100₪/יום)"])
-        booking_layout.addRow("סוג ביטוח:", self.insurance_type)
-        
-        # הערות
-        self.special_requests = QTextEdit()
-        self.special_requests.setMaximumHeight(80)
-        self.special_requests.setPlaceholderText("הערות מיוחדות (אופציונלי)")
-        booking_layout.addRow("הערות:", self.special_requests)
-        
-        booking_group.setLayout(booking_layout)
-        layout.addWidget(booking_group)
         
         # פרטי לקוח
         customer_group = QGroupBox("פרטי הלקוח")
@@ -106,167 +66,70 @@ class BookingDialog(QDialog):
         
         self.first_name = QLineEdit()
         customer_layout.addRow("שם פרטי:", self.first_name)
-        
         self.last_name = QLineEdit()
         customer_layout.addRow("שם משפחה:", self.last_name)
-        
         self.email = QLineEdit()
         customer_layout.addRow("אימייל:", self.email)
-        
         self.phone = QLineEdit()
         customer_layout.addRow("טלפון:", self.phone)
-        
-        self.license_number = QLineEdit()
-        customer_layout.addRow("מספר רישיון:", self.license_number)
         
         customer_group.setLayout(customer_layout)
         layout.addWidget(customer_group)
         
-        # חישוב מחיר
-        self.price_label = QLabel()
-        self.price_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2E86C1; padding: 10px; background: #E8F4FD; border-radius: 5px;")
-        layout.addWidget(self.price_label)
+        # תאריכים
+        dates_group = QGroupBox("תאריכי השכרה")
+        dates_layout = QFormLayout()
+        
+        self.start_date = QDateEdit()
+        self.start_date.setDate(QDate.currentDate())
+        dates_layout.addRow("תאריך תחילה:", self.start_date)
+        
+        self.end_date = QDateEdit()
+        self.end_date.setDate(QDate.currentDate().addDays(3))
+        dates_layout.addRow("תאריך סיום:", self.end_date)
+        
+        dates_group.setLayout(dates_layout)
+        layout.addWidget(dates_group)
         
         # כפתורים
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("אשר הזמנה")
         buttons.button(QDialogButtonBox.Cancel).setText("ביטול")
-        buttons.accepted.connect(self.confirm_booking)
+        buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         
         self.setLayout(layout)
-        
-        # חיבור לעדכון מחיר
-        self.start_date.dateChanged.connect(self.update_price)
-        self.end_date.dateChanged.connect(self.update_price)
-        self.insurance_type.currentTextChanged.connect(self.update_price)
-        
-        # חישוב מחיר ראשוני
-        self.update_price()
-    
-    def update_price(self):
-        """עדכון חישוב המחיר"""
-        try:
-            start = self.start_date.date().toPython()
-            end = self.end_date.date().toPython()
-            days = (end - start).days
-            
-            if days <= 0:
-                self.price_label.setText("תאריכים לא תקינים")
-                return
-            
-            daily_rate = float(self.car_data.get("daily_rate", 0))
-            base_price = daily_rate * days
-            
-            # ביטוח
-            insurance_cost = 0
-            insurance_text = self.insurance_type.currentText()
-            if "מורחב" in insurance_text:
-                insurance_cost = 50 * days
-            elif "מקיף" in insurance_text:
-                insurance_cost = 100 * days
-            
-            total_price = base_price + insurance_cost
-            
-            price_text = f"""
-            <b>פירוט החשבונית:</b><br>
-            השכרה: {days} ימים × {daily_rate}₪ = {base_price}₪<br>
-            ביטוח: {insurance_cost}₪<br>
-            <b>סה"כ לתשלום: {total_price}₪</b>
-            """
-            
-            self.price_label.setText(price_text)
-            
-        except Exception as e:
-            self.price_label.setText(f"שגיאה בחישוב: {e}")
-    
-    def confirm_booking(self):
-        """אישור ההזמנה"""
-        # בדיקת שדות חובה
-        if not all([self.first_name.text(), self.last_name.text(), 
-                   self.email.text(), self.phone.text(), self.license_number.text()]):
-            QMessageBox.warning(self, "שדות חסרים", "אנא מלא את כל השדות החובה")
-            return
-        
-        # הכנת נתוני ההזמנה
-        start = self.start_date.date().toPython()
-        end = self.end_date.date().toPython()
-        days = (end - start).days
-        daily_rate = float(self.car_data.get("daily_rate", 0))
-        
-        # חישוב ביטוח
-        insurance_cost = 0
-        insurance_text = self.insurance_type.currentText()
-        if "מורחב" in insurance_text:
-            insurance_cost = 50 * days
-        elif "מקיף" in insurance_text:
-            insurance_cost = 100 * days
-        
-        total_price = (daily_rate * days) + insurance_cost
-        
-        self.booking_data = {
-            "car_id": self.car_data.get("id"),
-            "customer": {
-                "first_name": self.first_name.text(),
-                "last_name": self.last_name.text(),
-                "email": self.email.text(),
-                "phone": self.phone.text(),
-                "license_number": self.license_number.text()
-            },
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "pickup_location": self.pickup_location.text(),
-            "return_location": self.return_location.text(),
-            "insurance_type": insurance_text.split()[0].lower(),
-            "days": days,
-            "total_price": total_price,
-            "special_requests": self.special_requests.toPlainText()
-        }
-        
-        # שליחת ההזמנה לשרת
-        try:
-            response = requests.post(f"{API_BASE_URL}/api/bookings", json=self.booking_data)
-            if response.status_code == 200:
-                QMessageBox.information(self, "הזמנה אושרה", 
-                                      f"ההזמנה אושרה בהצלחה!\nמספר הזמנה: {response.json().get('booking_id', 'לא ידוע')}")
-                self.accept()
-            else:
-                QMessageBox.warning(self, "שגיאה", f"שגיאה ביצירת הזמנה: {response.text}")
-        except Exception as e:
-            QMessageBox.critical(self, "שגיאת תקשורת", f"לא ניתן ליצור הזמנה: {str(e)}")
+
+# ===========================================
+# פאנל פרטי רכב
+# ===========================================
 
 class CarDetailsWidget(QWidget):
-    """פאנל פרטי רכב"""
-    
-    book_car = Signal(dict)  # Signal להזמנת רכב
-    
     def __init__(self):
         super().__init__()
         self.current_car = None
         self.setup_ui()
     
     def setup_ui(self):
-        self.setMaximumWidth(350)  # רוחב מותאם
+        self.setMaximumWidth(320)
         layout = QVBoxLayout()
         
-        # כותרת
         title = QLabel("פרטי הרכב")
         title.setFont(QFont("Arial", 13, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: #2E86C1; padding: 8px; background: #F8F9FA; border-radius: 5px;")
         layout.addWidget(title)
         
-        # פאנל פרטים
         self.details_frame = QFrame()
         self.details_frame.setStyleSheet("background: white; border: 1px solid #BDC3C7; border-radius: 5px; padding: 12px;")
         details_layout = QVBoxLayout()
         
         # תמונת רכב
         self.car_image = QLabel()
-        self.car_image.setFixedHeight(100)
+        self.car_image.setFixedHeight(80)
         self.car_image.setAlignment(Qt.AlignCenter)
-        self.car_image.setStyleSheet("background: #ECF0F1; border: 1px solid #BDC3C7; border-radius: 5px; color: #7F8C8D; font-size: 11px;")
+        self.car_image.setStyleSheet("background: #ECF0F1; border: 1px solid #BDC3C7; border-radius: 5px; color: #7F8C8D; font-size: 10px;")
         self.car_image.setText("תמונת רכב")
         details_layout.addWidget(self.car_image)
         
@@ -276,31 +139,27 @@ class CarDetailsWidget(QWidget):
         
         # תכונות
         features_label = QLabel("תכונות:")
-        features_label.setFont(QFont("Arial", 10, QFont.Bold))
+        features_label.setFont(QFont("Arial", 9, QFont.Bold))
         details_layout.addWidget(features_label)
         
         self.features_text = QTextEdit()
-        self.features_text.setMaximumHeight(70)
+        self.features_text.setMaximumHeight(60)
         self.features_text.setReadOnly(True)
+        self.features_text.setStyleSheet("font-size: 9px;")
         details_layout.addWidget(self.features_text)
         
         # כפתור הזמנה
         self.book_button = QPushButton("הזמן רכב זה")
-        self.book_button.setFont(QFont("Arial", 11, QFont.Bold))
         self.book_button.setStyleSheet("""
             QPushButton {
                 background-color: #27AE60;
                 color: white;
-                padding: 12px;
+                padding: 10px;
                 border-radius: 6px;
-                font-size: 12px;
+                font-size: 11px;
+                font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #229954;
-            }
-            QPushButton:pressed {
-                background-color: #1E8449;
-            }
+            QPushButton:hover { background-color: #229954; }
         """)
         self.book_button.clicked.connect(self.on_book_clicked)
         self.book_button.setEnabled(False)
@@ -312,37 +171,43 @@ class CarDetailsWidget(QWidget):
         # הודעה ראשונית
         self.empty_label = QLabel("בחר רכב מהטבלה לצפייה בפרטים")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: #7F8C8D; font-style: italic; padding: 30px; font-size: 11px;")
+        self.empty_label.setStyleSheet("color: #7F8C8D; font-style: italic; padding: 30px; font-size: 10px;")
         layout.addWidget(self.empty_label)
         
         self.setLayout(layout)
         self.hide_details()
     
     def show_car_details(self, car_data: Dict):
-        """הצגת פרטי רכב"""
         self.current_car = car_data
         
         # עדכון תמונת רכב
         car_name = f"{car_data.get('make', '')} {car_data.get('model', '')}"
-        self.car_image.setText(f"תמונת רכב\n{car_name}")
+        source = car_data.get('source', 'מקומי')
+        self.car_image.setText(f"תמונת רכב\n{car_name}\n({source})")
         
         # מחיקת פרטים ישנים
         for i in reversed(range(self.info_layout.count())):
             self.info_layout.itemAt(i).widget().setParent(None)
         
         # הוספת פרטים חדשים
-        details = [
+        details = []
+        
+        # הוספת ספק אם זה רכב חיצוני
+        if car_data.get('supplier'):
+            details.append(("ספק:", str(car_data.get("supplier", ""))))
+        
+        details.extend([
             ("יצרן:", str(car_data.get("make", "לא ידוע"))),
             ("דגם:", str(car_data.get("model", "לא ידוע"))),
             ("שנה:", str(car_data.get("year", "לא ידוע"))),
             ("סוג:", str(car_data.get("car_type", "לא ידוע"))),
-            ("תיבת הילוכים:", str(car_data.get("transmission", "לא ידוע"))),
-            ("דלק:", str(car_data.get("fuel_type", "לא ידוע"))),
-            ("מקומות:", str(car_data.get("seats", "לא ידוע"))),
-            ("מיקום:", str(car_data.get("location", "לא ידוע"))),
             ("מחיר יומי:", f"{car_data.get('daily_rate', 0)} ₪"),
-            ("זמינות:", "זמין" if car_data.get("available", True) else "תפוס")
-        ]
+            ("נוסעים:", str(car_data.get("seats", "לא ידוע"))),
+        ])
+        
+        # הוספת מיקום (רק לרכבים מקומיים)
+        if car_data.get('location') and not car_data.get('supplier'):
+            details.append(("מיקום:", str(car_data.get("location", "לא ידוע"))))
         
         for i, (label, value) in enumerate(details):
             label_widget = QLabel(label)
@@ -356,7 +221,7 @@ class CarDetailsWidget(QWidget):
         # תכונות
         features = car_data.get("features", [])
         if isinstance(features, list):
-            features_text = "\n".join([f"• {feature}" for feature in features])
+            features_text = "\n".join([f"• {feature}" for feature in features[:4]])
         else:
             features_text = str(features) if features else "אין מידע על תכונות"
         
@@ -367,225 +232,271 @@ class CarDetailsWidget(QWidget):
         self.book_button.setEnabled(is_available)
         self.book_button.setText("הזמן רכב זה" if is_available else "רכב לא זמין")
         
-        # הצגת הפאנל
         self.show_details()
     
     def show_details(self):
-        """הצגת פאנל הפרטים"""
         self.empty_label.hide()
         self.details_frame.show()
     
     def hide_details(self):
-        """הסתרת פאנל הפרטים"""
         self.details_frame.hide()
         self.empty_label.show()
     
     def on_book_clicked(self):
-        """טיפול בלחיצה על כפתור הזמנה"""
         if self.current_car:
             booking_dialog = BookingDialog(self.current_car, self)
             if booking_dialog.exec() == QDialog.Accepted:
                 QMessageBox.information(self, "הזמנה", "ההזמנה נשלחה בהצלחה!")
 
+# ===========================================
+# רכיב ראשי עם טבלה משולבת
+# ===========================================
+
 class CarsWidget(QWidget):
-    """רכיב ראשי להצגת רכבים עם פאנל פרטים"""
+    """רכיב ראשי עם טבלה משולבת לרכבים מקומיים וחיצוניים"""
     
     def __init__(self):
         super().__init__()
-        self.cars_data = []
+        self.local_cars_data = []
+        self.external_cars_data = []
+        self.all_cars_data = []
         self.setup_ui()
-        self.load_cars()
+        self.load_all_cars()
         
         # Timer לרענון נתונים
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.load_cars)
-        self.refresh_timer.start(30000)  # רענון כל 30 שניות
+        self.refresh_timer.timeout.connect(self.load_all_cars)
+        self.refresh_timer.start(30000)
     
     def setup_ui(self):
-        layout = QHBoxLayout()
+        main_layout = QHBoxLayout()
         
-        # צד שמאל - טבלת רכבים
-        left_panel = QWidget()
+        # צד שמאל - טבלה משולבת
+        left_widget = QWidget()
         left_layout = QVBoxLayout()
         
-        # פילטרים קומפקטיים בשורה אחת
+        # כותרת כללית
+        main_title = QLabel("מערכת השכרת רכבים - טבלה משולבת")
+        main_title.setFont(QFont("Arial", 16, QFont.Bold))
+        main_title.setAlignment(Qt.AlignCenter)
+        main_title.setStyleSheet("color: #2E86C1; padding: 10px; background: #F8F9FA; border-radius: 8px; margin-bottom: 5px;")
+        left_layout.addWidget(main_title)
+        
+        # פילטרים משולבים
         filters_layout = QHBoxLayout()
         
-        # חיפוש
-        search_label = QLabel("חיפוש:")
-        search_label.setMaximumWidth(50)
-        filters_layout.addWidget(search_label)
-        
+        filters_layout.addWidget(QLabel("חיפוש:"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("יצרן, דגם, מיקום...")
-        self.search_input.setMaximumWidth(150)
+        self.search_input.setPlaceholderText("יצרן, דגם, ספק...")
+        self.search_input.setMaximumWidth(120)
         self.search_input.textChanged.connect(self.filter_cars)
         filters_layout.addWidget(self.search_input)
         
-        filters_layout.addSpacing(10)
+        filters_layout.addWidget(QLabel("מקור:"))
+        self.source_filter = QComboBox()
+        self.source_filter.addItems(["הכל", "מקומי", "חיצוני"])
+        self.source_filter.setMaximumWidth(80)
+        self.source_filter.currentTextChanged.connect(self.filter_cars)
+        filters_layout.addWidget(self.source_filter)
         
-        # סוג רכב
-        type_label = QLabel("סוג:")
-        type_label.setMaximumWidth(30)
-        filters_layout.addWidget(type_label)
+        filters_layout.addWidget(QLabel("סוג:"))
+        self.type_filter = QComboBox()
+        self.type_filter.addItems(["הכל", "economy", "compact", "family", "luxury", "suv"])
+        self.type_filter.setMaximumWidth(80)
+        self.type_filter.currentTextChanged.connect(self.filter_cars)
+        filters_layout.addWidget(self.type_filter)
         
-        self.car_type_filter = QComboBox()
-        self.car_type_filter.addItems(["הכל", "economy", "family", "luxury", "compact"])
-        self.car_type_filter.setMaximumWidth(90)
-        self.car_type_filter.currentTextChanged.connect(self.filter_cars)
-        filters_layout.addWidget(self.car_type_filter)
+        filters_layout.addWidget(QLabel("ספק:"))
+        self.supplier_filter = QComboBox()
+        self.supplier_filter.addItems(["הכל", "Hertz", "Avis", "Budget", "Enterprise", "Sixt"])
+        self.supplier_filter.setMaximumWidth(80)
+        self.supplier_filter.currentTextChanged.connect(self.filter_cars)
+        filters_layout.addWidget(self.supplier_filter)
         
-        filters_layout.addSpacing(10)
+        filters_layout.addWidget(QLabel("מחיר:"))
+        self.price_filter = QComboBox()
+        self.price_filter.addItems(["הכל", "עד 200₪", "200-300₪", "300-400₪", "מעל 400₪"])
+        self.price_filter.setMaximumWidth(90)
+        self.price_filter.currentTextChanged.connect(self.filter_cars)
+        filters_layout.addWidget(self.price_filter)
         
-        # מיקום
-        location_label = QLabel("מיקום:")
-        location_label.setMaximumWidth(40)
-        filters_layout.addWidget(location_label)
-        
-        self.location_filter = QComboBox()
-        self.location_filter.addItem("הכל")
-        self.location_filter.setMaximumWidth(90)
-        self.location_filter.currentTextChanged.connect(self.filter_cars)
-        filters_layout.addWidget(self.location_filter)
-        
-        filters_layout.addSpacing(10)
-        
-        # כפתור רענון
         refresh_btn = QPushButton("רענן")
         refresh_btn.setMaximumWidth(50)
-        refresh_btn.setMaximumHeight(25)
-        refresh_btn.clicked.connect(self.load_cars)
+        refresh_btn.setStyleSheet("background-color: #28A745; color: white; padding: 6px; border-radius: 4px; font-weight: bold;")
+        refresh_btn.clicked.connect(self.load_all_cars)
         filters_layout.addWidget(refresh_btn)
         
-        # ממלא מקום
         filters_layout.addStretch()
-        
         left_layout.addLayout(filters_layout)
         
-        # טבלת רכבים
+        # טבלה משולבת
         self.cars_table = QTableWidget()
-        self.cars_table.setColumnCount(7)
+        self.cars_table.setColumnCount(8)
         self.cars_table.setHorizontalHeaderLabels([
-            "יצרן", "דגם", "שנה", "סוג", "מחיר יומי", "מיקום", "זמינות"
+            "מקור", "ספק/מיקום", "יצרן", "דגם", "שנה", "סוג", "מחיר יומי", "נוסעים"
         ])
         self.cars_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.cars_table.setAlternatingRowColors(True)
         self.cars_table.itemSelectionChanged.connect(self.on_car_selected)
         left_layout.addWidget(self.cars_table)
         
-        # סטטיסטיקות
+        # סטטיסטיקות משולבות
         self.stats_label = QLabel()
         self.stats_label.setStyleSheet("background: #E8F4FD; padding: 6px; border-radius: 5px; color: #2E86C1; font-size: 10px;")
         left_layout.addWidget(self.stats_label)
         
-        left_panel.setLayout(left_layout)
-        layout.addWidget(left_panel, 4)  # 4/5 מהמקום לטבלה
+        left_widget.setLayout(left_layout)
+        main_layout.addWidget(left_widget, 5)  # 5/6 מהמסך לטבלה
         
         # צד ימין - פרטי רכב
         self.car_details = CarDetailsWidget()
-        layout.addWidget(self.car_details, 1)  # 1/5 מהמקום לפרטים
+        main_layout.addWidget(self.car_details, 1)  # 1/6 מהמסך לפרטים
         
-        self.setLayout(layout)
+        self.setLayout(main_layout)
     
-    def load_cars(self):
-        """טעינת רכבים מהשרת"""
+    def load_all_cars(self):
+        """טעינת כל הרכבים - מקומיים וחיצוניים"""
+        self.load_local_cars()
+        self.load_external_cars()
+        self.merge_cars_data()
+        self.populate_table()
+        self.update_stats()
+    
+    def load_local_cars(self):
+        """טעינת רכבים מקומיים"""
         try:
-            response = requests.get(f"{API_BASE_URL}/api/cars")
+            response = requests.get(f"{API_BASE_URL}/api/cars", timeout=5)
             if response.status_code == 200:
-                self.cars_data = response.json()
-                self.update_location_filter()
-                self.populate_table()
-                self.update_stats()
-            else:
-                QMessageBox.warning(self, "שגיאה", "לא ניתן לטעון רכבים מהשרת")
+                self.local_cars_data = response.json()
+                # הוספת מקור לכל רכב מקומי
+                for car in self.local_cars_data:
+                    car["source"] = "מקומי"
+                    car["supplier"] = None  # אין ספק לרכבים מקומיים
         except Exception as e:
-            QMessageBox.critical(self, "שגיאת תקשורת", f"שגיאה בטעינת נתונים: {str(e)}")
+            print(f"שגיאה בטעינת רכבים מקומיים: {e}")
+            self.local_cars_data = []
     
-    def update_location_filter(self):
-        """עדכון רשימת המיקומים בפילטר"""
-        current_location = self.location_filter.currentText()
-        self.location_filter.clear()
-        self.location_filter.addItem("הכל")
+    def load_external_cars(self):
+        """טעינת רכבים חיצוניים (דמו)"""
+        self.external_cars_data = [
+            {"supplier": "Hertz", "make": "Toyota", "model": "Corolla", "year": 2023, "car_type": "economy", "daily_rate": 180, "seats": 5, "features": ["GPS", "A/C", "Bluetooth"], "source": "חיצוני", "available": True},
+            {"supplier": "Hertz", "make": "Nissan", "model": "Altima", "year": 2023, "car_type": "family", "daily_rate": 220, "seats": 5, "features": ["GPS", "A/C", "Premium Audio"], "source": "חיצוני", "available": True},
+            {"supplier": "Avis", "make": "Honda", "model": "Civic", "year": 2022, "car_type": "compact", "daily_rate": 165, "seats": 5, "features": ["A/C", "Bluetooth", "Backup Camera"], "source": "חיצוני", "available": True},
+            {"supplier": "Avis", "make": "BMW", "model": "X3", "year": 2023, "car_type": "luxury", "daily_rate": 450, "seats": 5, "features": ["GPS", "Leather", "Premium Sound"], "source": "חיצוני", "available": True},
+            {"supplier": "Budget", "make": "Ford", "model": "Escape", "year": 2022, "car_type": "suv", "daily_rate": 290, "seats": 7, "features": ["GPS", "AWD", "Roof Rack"], "source": "חיצוני", "available": True},
+            {"supplier": "Budget", "make": "Hyundai", "model": "Elantra", "year": 2023, "car_type": "economy", "daily_rate": 155, "seats": 5, "features": ["A/C", "Bluetooth"], "source": "חיצוני", "available": True},
+            {"supplier": "Enterprise", "make": "Mercedes", "model": "C-Class", "year": 2023, "car_type": "luxury", "daily_rate": 520, "seats": 5, "features": ["GPS", "Leather", "Premium Sound"], "source": "חיצוני", "available": True},
+            {"supplier": "Enterprise", "make": "Jeep", "model": "Wrangler", "year": 2022, "car_type": "suv", "daily_rate": 380, "seats": 5, "features": ["4WD", "Convertible", "GPS"], "source": "חיצוני", "available": True},
+        ]
+    
+    def merge_cars_data(self):
+        """מיזוג נתוני רכבים מקומיים וחיצוניים"""
+        self.all_cars_data = []
         
-        locations = set()
-        for car in self.cars_data:
-            location = car.get("location", "")
-            if location and location != "string":
-                locations.add(location)
+        # הוספת רכבים מקומיים (מסנן רכבים פגומים)
+        for car in self.local_cars_data:
+            if car.get("make") != "string":
+                self.all_cars_data.append(car)
         
-        for location in sorted(locations):
-            self.location_filter.addItem(location)
-        
-        # שמירת הבחירה הקודמת
-        index = self.location_filter.findText(current_location)
-        if index >= 0:
-            self.location_filter.setCurrentIndex(index)
+        # הוספת רכבים חיצוניים
+        self.all_cars_data.extend(self.external_cars_data)
     
     def populate_table(self):
-        """מילוי הטבלה ברכבים"""
+        """מילוי הטבלה המשולבת"""
         filtered_cars = self.get_filtered_cars()
-        
         self.cars_table.setRowCount(len(filtered_cars))
         
         for row, car in enumerate(filtered_cars):
-            # סינון רכבים עם נתונים לא תקינים
-            if car.get("make") == "string" or car.get("model") == "string":
-                continue
-                
+            # קביעת ספק/מיקום
+            supplier_location = car.get("supplier", "") if car.get("supplier") else car.get("location", "לא ידוע")
+            
             items = [
+                car.get("source", "לא ידוע"),
+                supplier_location,
                 str(car.get("make", "לא ידוע")),
                 str(car.get("model", "לא ידוע")),
                 str(car.get("year", "לא ידוע")),
                 str(car.get("car_type", "לא ידוע")),
                 f"{car.get('daily_rate', 0)} ₪",
-                str(car.get("location", "לא ידוע")),
-                "זמין" if car.get("available", True) else "תפוס"
+                str(car.get("seats", "לא ידוע"))
             ]
             
             for col, item_text in enumerate(items):
-                item = QTableWidgetItem(item_text)
+                item = QTableWidgetItem(str(item_text))
                 
-                # צביעת שורות לא זמינות
+                # צביעה לפי מקור
+                if car.get("source") == "מקומי":
+                    item.setBackground(QColor(240, 248, 255))  # כחול בהיר
+                else:
+                    # צביעה לפי ספק לרכבים חיצוניים
+                    if car.get("supplier") == "Hertz":
+                        item.setBackground(QColor(255, 255, 224))  # צהוב בהיר
+                    elif car.get("supplier") == "Avis":
+                        item.setBackground(QColor(230, 240, 255))  # כחול בהיר
+                    elif car.get("supplier") == "Budget":
+                        item.setBackground(QColor(240, 255, 240))  # ירוק בהיר
+                    elif car.get("supplier") == "Enterprise":
+                        item.setBackground(QColor(255, 240, 245))  # ורוד בהיר
+                    else:
+                        item.setBackground(QColor(248, 248, 248))  # אפור בהיר
+                
+                # סימון רכבים לא זמינים
                 if not car.get("available", True):
-                    item.setBackground(Qt.lightGray)
+                    item.setBackground(QColor(211, 211, 211))  # אפור
                 
-                # הוספת ID הרכב לשורה הראשונה
                 if col == 0:
                     item.setData(Qt.UserRole, car)
                 
                 self.cars_table.setItem(row, col, item)
         
-        # התאמת גודל עמודות
         self.cars_table.resizeColumnsToContents()
     
     def get_filtered_cars(self):
-        """קבלת רכבים מסוננים לפי הפילטרים"""
-        filtered = [car for car in self.cars_data if car.get("make") != "string"]
+        """סינון רכבים לפי הפילטרים"""
+        filtered = self.all_cars_data.copy()
         
-        # פילטר חיפוש טקסט
+        # פילטר חיפוש
         search_text = self.search_input.text().lower()
         if search_text:
             filtered = [
                 car for car in filtered
                 if search_text in str(car.get("make", "")).lower() or
                    search_text in str(car.get("model", "")).lower() or
+                   search_text in str(car.get("supplier", "")).lower() or
                    search_text in str(car.get("location", "")).lower()
             ]
         
-        # פילטר סוג רכב
-        car_type = self.car_type_filter.currentText()
+        # פילטר מקור
+        source = self.source_filter.currentText()
+        if source != "הכל":
+            filtered = [car for car in filtered if car.get("source") == source]
+        
+        # פילטר סוג
+        car_type = self.type_filter.currentText()
         if car_type != "הכל":
             filtered = [car for car in filtered if car.get("car_type") == car_type]
         
-        # פילטר מיקום
-        location = self.location_filter.currentText()
-        if location != "הכל":
-            filtered = [car for car in filtered if car.get("location") == location]
+        # פילטר ספק
+        supplier = self.supplier_filter.currentText()
+        if supplier != "הכל":
+            filtered = [car for car in filtered if car.get("supplier") == supplier]
+        
+        # פילטר מחיר
+        price_range = self.price_filter.currentText()
+        if price_range != "הכל":
+            if "עד 200" in price_range:
+                filtered = [car for car in filtered if car.get("daily_rate", 0) <= 200]
+            elif "200-300" in price_range:
+                filtered = [car for car in filtered if 200 < car.get("daily_rate", 0) <= 300]
+            elif "300-400" in price_range:
+                filtered = [car for car in filtered if 300 < car.get("daily_rate", 0) <= 400]
+            elif "מעל 400" in price_range:
+                filtered = [car for car in filtered if car.get("daily_rate", 0) > 400]
         
         return filtered
     
     def filter_cars(self):
-        """הפעלת סינון ועדכון הטבלה"""
+        """הפעלת סינון"""
         self.populate_table()
         self.update_stats()
     
@@ -593,18 +504,24 @@ class CarsWidget(QWidget):
         """עדכון סטטיסטיקות"""
         filtered_cars = self.get_filtered_cars()
         total = len(filtered_cars)
-        available = len([car for car in filtered_cars if car.get("available", True)])
+        
+        local_count = len([car for car in filtered_cars if car.get("source") == "מקומי"])
+        external_count = len([car for car in filtered_cars if car.get("source") == "חיצוני"])
+        available_count = len([car for car in filtered_cars if car.get("available", True)])
         
         if total > 0:
             avg_price = sum(car.get("daily_rate", 0) for car in filtered_cars) / total
-            stats_text = f"סה\"כ רכבים: {total} | זמינים: {available} | מחיר ממוצע: {avg_price:.0f}₪"
+            min_price = min(car.get("daily_rate", 0) for car in filtered_cars)
+            max_price = max(car.get("daily_rate", 0) for car in filtered_cars)
+            
+            stats_text = f'סה"כ: {total} רכבים | מקומי: {local_count} | חיצוני: {external_count} | זמינים: {available_count} | מחיר: {min_price}-{max_price}₪ (ממוצע: {avg_price:.0f}₪)'
         else:
             stats_text = "לא נמצאו רכבים התואמים לחיפוש"
         
         self.stats_label.setText(stats_text)
     
     def on_car_selected(self):
-        """טיפול בבחירת רכב מהטבלה"""
+        """בחירת רכב מהטבלה"""
         current_row = self.cars_table.currentRow()
         if current_row >= 0:
             first_item = self.cars_table.item(current_row, 0)
