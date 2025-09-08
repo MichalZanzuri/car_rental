@@ -232,9 +232,9 @@ class LoginDialog(QDialog):
         
         # כפתור עזרה/מידע
         info_layout = QHBoxLayout()
-        demo_button = QPushButton("מלא נתונים לדוגמא")
-        demo_button.clicked.connect(self.fill_demo_data)
-        info_layout.addWidget(demo_button)
+        #demo_button = QPushButton("מלא נתונים לדוגמא")
+        #demo_button.clicked.connect(self.fill_demo_data)
+        #info_layout.addWidget(demo_button)
         
         server_status_button = QPushButton("בדוק חיבור לשרת")
         server_status_button.clicked.connect(self.check_server_status)

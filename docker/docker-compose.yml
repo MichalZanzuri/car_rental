@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   ollama:
     image: ollama/ollama:0.1.32
@@ -6,38 +8,47 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_KEEP_ALIVE=24h
-      - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_ORIGINS=*
     restart: unless-stopped
-    pull_policy: missing
-    networks:
-      - ai-network
 
   chromadb:
     image: chromadb/chroma:0.4.15
     container_name: car-rental-chromadb
     ports:
       - "8001:8000"
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
     volumes:
       - chroma_data:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
-      - ANONYMIZED_TELEMETRY=FALSE
-      - CHROMA_SERVER_CORS_ALLOW_ORIGINS=["*"]
     restart: unless-stopped
-    pull_policy: missing
-    networks:
-      - ai-network
 
-networks:
-  ai-network:
-    driver: bridge
+  postgres:
+    image: postgres:13
+    container_name: car-rental-postgres
+    environment:
+      POSTGRES_DB: car_rental_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: car-rental-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
 
 volumes:
-  chroma_data:
-    driver: local
   ollama_data:
-    driver: local
+  chroma_data:
+  postgres_data:

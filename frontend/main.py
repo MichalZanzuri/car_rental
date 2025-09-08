@@ -27,6 +27,15 @@ from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter
 # הוספת imports למערכת אוטנטיקציה
 from ui.login_dialog import LoginDialog, session_manager
 
+# הוספת import לרכיב הרכבים החדש
+try:
+    from components.cars_table import CarsWidget
+    CARS_WIDGET_AVAILABLE = True
+    print("רכיב רכבים זמין")
+except ImportError as e:
+    CARS_WIDGET_AVAILABLE = False
+    print(f"רכיב רכבים לא זמין: {e}")
+
 # הוספת import ליועץ AI
 try:
     from components.ai_chat_widget import AIChatWidget
@@ -142,7 +151,7 @@ class CarRentalAPI:
     def get_all_cars():
         """קבלת כל הרכבים"""
         try:
-            response = requests.get(f"{API_BASE_URL}/api/queries/cars")
+            response = requests.get(f"{API_BASE_URL}/api/cars")
             return response.json() if response.status_code == 200 else []
         except Exception as e:
             print(f"שגיאה בקבלת רכבים: {e}")
@@ -152,7 +161,7 @@ class CarRentalAPI:
     def search_cars(query_data):
         """חיפוש רכבים"""
         try:
-            response = requests.post(f"{API_BASE_URL}/api/queries/cars/search", json=query_data)
+            response = requests.post(f"{API_BASE_URL}/api/cars/search", json=query_data)
             return response.json() if response.status_code == 200 else []
         except Exception as e:
             print(f"שגיאה בחיפוש: {e}")
@@ -162,172 +171,62 @@ class CarRentalAPI:
     def get_car_stats():
         """קבלת סטטיסטיקות"""
         try:
-            response = requests.get(f"{API_BASE_URL}/api/queries/stats/cars-by-type")
+            response = requests.get(f"{API_BASE_URL}/api/stats/cars-by-type")
             return response.json() if response.status_code == 200 else {"data": []}
         except Exception as e:
             print(f"שגיאה בקבלת סטטיסטיקות: {e}")
             return {"data": []}
 
 # ====================
-# רכיבי UI (Microfrontends)
+# רכיבי UI - Fallback Components
 # ====================
 
-class SearchWidget(QGroupBox):
-    """רכיב חיפוש רכבים"""
-    
-    search_requested = Signal(dict)  # Signal לבקשת חיפוש
-    
-    def __init__(self):
-        super().__init__("חיפוש רכבים")
-        self.setup_ui()
-    
-    def setup_ui(self):
-        layout = QGridLayout()
-        
-        # שדות חיפוש
-        layout.addWidget(QLabel("מיקום:"), 0, 0)
-        self.location_input = QLineEdit()
-        self.location_input.setPlaceholderText("תל אביב, חיפה, ירושלים...")
-        layout.addWidget(self.location_input, 0, 1)
-        
-        layout.addWidget(QLabel("מחיר מקסימלי ליום:"), 0, 2)
-        self.max_price_input = QSpinBox()
-        self.max_price_input.setRange(0, 1000)
-        self.max_price_input.setSuffix(" ₪")
-        self.max_price_input.setValue(500)
-        layout.addWidget(self.max_price_input, 0, 3)
-        
-        layout.addWidget(QLabel("סוג רכב:"), 1, 0)
-        self.car_type_combo = QComboBox()
-        self.car_type_combo.addItems(["הכל", "economy", "compact", "midsize", "fullsize", "luxury", "suv"])
-        layout.addWidget(self.car_type_combo, 1, 1)
-        
-        layout.addWidget(QLabel("תיבת הילוכים:"), 1, 2)
-        self.transmission_combo = QComboBox()
-        self.transmission_combo.addItems(["הכל", "automatic", "manual"])
-        layout.addWidget(self.transmission_combo, 1, 3)
-        
-        # כפתור חיפוש
-        self.search_button = QPushButton("חפש רכבים")
-        self.search_button.clicked.connect(self.perform_search)
-        layout.addWidget(self.search_button, 2, 0, 1, 4)
-        
-        self.setLayout(layout)
-    
-    def perform_search(self):
-        """ביצוע חיפוש"""
-        query = {}
-        
-        if self.location_input.text().strip():
-            query["location"] = self.location_input.text().strip()
-        
-        if self.max_price_input.value() > 0:
-            query["max_price"] = self.max_price_input.value()
-        
-        if self.car_type_combo.currentText() != "הכל":
-            query["car_type"] = self.car_type_combo.currentText()
-        
-        if self.transmission_combo.currentText() != "הכל":
-            query["transmission"] = self.transmission_combo.currentText()
-        
-        self.search_requested.emit(query)
-
-class CarsTableWidget(QGroupBox):
-    """טבלת תצוגת רכבים"""
-    
-    car_selected = Signal(dict)  # Signal לבחירת רכב
+class SimpleCarsWidget(QGroupBox):
+    """רכיב פשוט להצגת רכבים - fallback אם הרכיב החדש לא זמין"""
     
     def __init__(self):
         super().__init__("רכבים זמינים")
-        self.cars_data = []
         self.setup_ui()
+        self.load_cars()
     
     def setup_ui(self):
         layout = QVBoxLayout()
         
-        # טבלה
+        # הודעה
+        info_label = QLabel("רכיב הרכבים המתקדם לא זמין. משתמש ברכיב פשוט.")
+        info_label.setStyleSheet("color: #e67e22; padding: 10px; background: #fef9e7; border-radius: 5px;")
+        layout.addWidget(info_label)
+        
+        # טבלה פשוטה
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels([
-            "יצרן", "דגם", "שנה", "סוג", "תיבת הילוכים", "מחיר ליום", "מיקום"
-        ])
-        
-        # הגדרת רוחב עמודות
-        self.table.setColumnWidth(0, 100)  # יצרן
-        self.table.setColumnWidth(1, 120)  # דגם
-        self.table.setColumnWidth(2, 80)   # שנה
-        self.table.setColumnWidth(3, 100)  # סוג
-        self.table.setColumnWidth(4, 120)  # תיבת הילוכים
-        self.table.setColumnWidth(5, 100)  # מחיר
-        self.table.setColumnWidth(6, 120)  # מיקום
-        
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.itemClicked.connect(self.on_car_selected)
-        
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["יצרן", "דגם", "שנה", "מחיר יומי"])
         layout.addWidget(self.table)
-        self.setLayout(layout)
-    
-    def update_cars(self, cars):
-        """עדכון רשימת הרכבים"""
-        self.cars_data = cars
-        self.table.setRowCount(len(cars))
         
-        for row, car in enumerate(cars):
-            self.table.setItem(row, 0, QTableWidgetItem(car["make"]))
-            self.table.setItem(row, 1, QTableWidgetItem(car["model"]))
-            self.table.setItem(row, 2, QTableWidgetItem(str(car["year"])))
-            self.table.setItem(row, 3, QTableWidgetItem(car["car_type"]))
-            self.table.setItem(row, 4, QTableWidgetItem(car["transmission"]))
-            self.table.setItem(row, 5, QTableWidgetItem(f"{car['daily_rate']:.0f} ₪"))
-            self.table.setItem(row, 6, QTableWidgetItem(car["location"]))
-    
-    def on_car_selected(self, item):
-        """טיפול בבחירת רכב"""
-        row = item.row()
-        if 0 <= row < len(self.cars_data):
-            self.car_selected.emit(self.cars_data[row])
-
-class CarDetailsWidget(QGroupBox):
-    """פרטי הרכב הנבחר"""
-    
-    def __init__(self):
-        super().__init__("פרטי רכב")
-        self.setup_ui()
-    
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        
-        self.details_text = QTextEdit()
-        self.details_text.setReadOnly(True)
-        self.details_text.setMaximumHeight(200)
-        layout.addWidget(self.details_text)
-        
-        # כפתור הזמנה
-        self.book_button = QPushButton("הזמן רכב זה")
-        self.book_button.setEnabled(False)
-        layout.addWidget(self.book_button)
+        # כפתור רענון
+        refresh_btn = QPushButton("רענן נתונים")
+        refresh_btn.clicked.connect(self.load_cars)
+        layout.addWidget(refresh_btn)
         
         self.setLayout(layout)
     
-    def update_car_details(self, car):
-        """עדכון פרטי הרכב"""
-        details = f"""
-<h3>{car['make']} {car['model']} ({car['year']})</h3>
-<p><b>סוג רכב:</b> {car['car_type']}</p>
-<p><b>תיבת הילוכים:</b> {car['transmission']}</p>
-<p><b>דלק:</b> {car['fuel_type']}</p>
-<p><b>מספר מקומות:</b> {car['seats']}</p>
-<p><b>מיקום:</b> {car['location']}</p>
-<p><b>מחיר ליום:</b> <span style="color: #2E86C1; font-weight: bold;">{car['daily_rate']:.0f} ₪</span></p>
-<p><b>זמינות:</b> {"זמין" if car['available'] else "לא זמין"}</p>
-        """
-        
-        self.details_text.setHtml(details)
-        self.book_button.setEnabled(car['available'])
+    def load_cars(self):
+        """טעינת רכבים"""
+        try:
+            cars = CarRentalAPI.get_all_cars()
+            self.table.setRowCount(len(cars))
+            
+            for row, car in enumerate(cars):
+                self.table.setItem(row, 0, QTableWidgetItem(str(car.get("make", "לא ידוע"))))
+                self.table.setItem(row, 1, QTableWidgetItem(str(car.get("model", "לא ידוע"))))
+                self.table.setItem(row, 2, QTableWidgetItem(str(car.get("year", "לא ידוע"))))
+                self.table.setItem(row, 3, QTableWidgetItem(f"{car.get('daily_rate', 0)} ₪"))
+            
+        except Exception as e:
+            QMessageBox.warning(self, "שגיאה", f"לא ניתן לטעון רכבים: {str(e)}")
 
 # ====================
-# גרפים - QtCharts (מתוקן)
+# גרפים - QtCharts
 # ====================
 
 try:
@@ -353,33 +252,14 @@ class SimpleChartsWidget(QTabWidget):
             # Timer לרענון נתונים - רק אם הגרפים זמינים
             self.timer = QTimer()
             self.timer.timeout.connect(self.safe_refresh_all_charts)
-            self.timer.start(60000)  # רענון כל דקה (פחות אגרסיבי)
+            self.timer.start(60000)  # רענון כל דקה
     
     def setup_ui(self):
         if not CHARTS_AVAILABLE:
-            # אם אין QtCharts, הצג הודעת התקנה
             error_widget = QWidget()
             error_layout = QVBoxLayout()
-            error_label = QLabel("""
-            QtCharts לא זמין!
-            
-            להתקנה, הרץ בטרמינל:
-            pip install PySide6-Addons
-            
-            או:
-            pip uninstall PySide6 PySide6-Addons
-            pip install PySide6>=6.6.0 PySide6-Addons>=6.6.0
-            
-            לאחר מכן הפעל מחדש את האפליקציה.
-            """)
-            error_label.setStyleSheet("""
-                color: #e74c3c;
-                padding: 30px;
-                font-size: 14px;
-                background-color: #fdf2f2;
-                border: 2px solid #e74c3c;
-                border-radius: 8px;
-            """)
+            error_label = QLabel("QtCharts לא זמין! התקן: pip install PySide6-Addons")
+            error_label.setStyleSheet("color: #e74c3c; padding: 30px; font-size: 14px; background-color: #fdf2f2; border: 2px solid #e74c3c; border-radius: 8px;")
             error_layout.addWidget(error_label)
             error_widget.setLayout(error_layout)
             self.addTab(error_widget, "התקנה נדרשת")
@@ -401,7 +281,7 @@ class SimpleChartsWidget(QTabWidget):
             self.charts_created = True
             
             # טעינה ראשונית
-            QTimer.singleShot(1000, self.safe_refresh_all_charts)  # רענון ראשוני אחרי שנייה
+            QTimer.singleShot(1000, self.safe_refresh_all_charts)
             
         except Exception as e:
             print(f"שגיאה ביצירת גרפים: {e}")
@@ -423,24 +303,20 @@ class SimpleChartsWidget(QTabWidget):
         layout = QVBoxLayout()
         
         try:
-            # יצירת גרף עוגה
             self.pie_series = QPieSeries()
             self.pie_chart = QChart()
             self.pie_chart.addSeries(self.pie_series)
             self.pie_chart.setTitle("התפלגות רכבים לפי סוג")
-            self.pie_chart.legend().show()
             
             self.pie_chart_view = QChartView(self.pie_chart)
             self.pie_chart_view.setRenderHint(QPainter.Antialiasing)
             layout.addWidget(self.pie_chart_view)
             
-            # כפתור רענון
             refresh_btn = QPushButton("רענן נתונים")
             refresh_btn.clicked.connect(self.safe_refresh_pie_chart)
             layout.addWidget(refresh_btn)
             
         except Exception as e:
-            print(f"שגיאה ביצירת גרף עוגה: {e}")
             error_label = QLabel(f"שגיאה: {e}")
             layout.addWidget(error_label)
         
@@ -453,7 +329,6 @@ class SimpleChartsWidget(QTabWidget):
         layout = QVBoxLayout()
         
         try:
-            # יצירת גרף עמודות
             self.bar_series = QBarSeries()
             self.bar_chart = QChart()
             self.bar_chart.addSeries(self.bar_series)
@@ -463,13 +338,11 @@ class SimpleChartsWidget(QTabWidget):
             self.bar_chart_view.setRenderHint(QPainter.Antialiasing)
             layout.addWidget(self.bar_chart_view)
             
-            # כפתור רענון
             refresh_btn = QPushButton("רענן נתונים")
             refresh_btn.clicked.connect(self.safe_refresh_bar_chart)
             layout.addWidget(refresh_btn)
             
         except Exception as e:
-            print(f"שגיאה ביצירת גרף עמודות: {e}")
             error_label = QLabel(f"שגיאה: {e}")
             layout.addWidget(error_label)
         
@@ -485,7 +358,6 @@ class SimpleChartsWidget(QTabWidget):
         self.stats_text.setReadOnly(True)
         layout.addWidget(self.stats_text)
         
-        # כפתור רענון
         refresh_btn = QPushButton("רענן סטטיסטיקות")
         refresh_btn.clicked.connect(self.safe_refresh_stats)
         layout.addWidget(refresh_btn)
@@ -501,7 +373,6 @@ class SimpleChartsWidget(QTabWidget):
         try:
             data = CarRentalAPI.get_car_stats()
             
-            # מחק נתונים ישנים בצורה בטוחה
             if hasattr(self, 'pie_series') and self.pie_series:
                 self.pie_series.clear()
             
@@ -517,18 +388,8 @@ class SimpleChartsWidget(QTabWidget):
                     slice_obj = self.pie_series.append(f"{item['type']}: {item['count']}", item["count"])
                     if i < len(colors):
                         slice_obj.setColor(colors[i])
-                    
-                    # הדגש את החלק הגדול ביותר
-                    max_count = max([x["count"] for x in data_items])
-                    if item["count"] == max_count:
-                        slice_obj.setExploded(True)
-                        slice_obj.setLabelVisible(True)
-                except Exception as slice_error:
-                    print(f"שגיאה בהוספת slice: {slice_error}")
+                except Exception:
                     continue
-            
-            if hasattr(self, 'pie_chart') and self.pie_chart:
-                self.pie_chart.setTitle(f"התפלגות רכבים לפי סוג (סה\"כ: {data.get('total_cars', 0)})")
             
         except Exception as e:
             print(f"שגיאה ברענון גרף העוגה: {e}")
@@ -545,58 +406,21 @@ class SimpleChartsWidget(QTabWidget):
             if not data_items:
                 return
             
-            # נקה את הגרף בצורה בטוחה
             if hasattr(self, 'bar_chart') and self.bar_chart:
-                # הסר צירים ישנים
-                for axis in self.bar_chart.axes():
-                    try:
-                        self.bar_chart.removeAxis(axis)
-                    except:
-                        pass
-                
-                # הסר series ישנים
-                try:
-                    self.bar_chart.removeAllSeries()
-                except:
-                    pass
+                self.bar_chart.removeAllSeries()
             
-            # צור series חדש
             self.bar_series = QBarSeries()
             bar_set = QBarSet("מספר רכבים")
             categories = []
             
             for item in data_items:
-                try:
-                    bar_set.append(item["count"])
-                    categories.append(item["type"])
-                except Exception as item_error:
-                    print(f"שגיאה בהוספת פריט: {item_error}")
-                    continue
+                bar_set.append(item["count"])
+                categories.append(item["type"])
             
-            bar_set.setColor(QColor("#3498db"))
             self.bar_series.append(bar_set)
             
-            # הוסף series לגרף
-            if hasattr(self, 'bar_chart') and self.bar_chart:
+            if hasattr(self, 'bar_chart'):
                 self.bar_chart.addSeries(self.bar_series)
-                
-                # צור צירים חדשים
-                axis_x = QBarCategoryAxis()
-                axis_x.setCategories(categories)
-                axis_y = QValueAxis()
-                
-                max_count = max([item["count"] for item in data_items]) if data_items else 1
-                axis_y.setRange(0, max_count + 1)
-                
-                # הוסף צירים
-                self.bar_chart.addAxis(axis_x, Qt.AlignBottom)
-                self.bar_chart.addAxis(axis_y, Qt.AlignLeft)
-                
-                # חבר series לצירים
-                self.bar_series.attachAxis(axis_x)
-                self.bar_series.attachAxis(axis_y)
-                
-                self.bar_chart.setTitle("רכבים לפי סוג")
             
         except Exception as e:
             print(f"שגיאה ברענון גרף העמודות: {e}")
@@ -607,22 +431,14 @@ class SimpleChartsWidget(QTabWidget):
             cars = CarRentalAPI.get_all_cars()
             stats_data = CarRentalAPI.get_car_stats()
             
-            # חישוב סטטיסטיקות
             total_cars = len(cars)
             available_cars = len([car for car in cars if car.get("available", True)])
             
-            # מחיר ממוצע
-            if cars:
-                avg_price = sum(car.get("daily_rate", 0) for car in cars) / len(cars)
-            else:
-                avg_price = 0
-            
-            # מיקומים
+            avg_price = sum(car.get("daily_rate", 0) for car in cars) / len(cars) if cars else 0
             locations = set(car.get("location", "") for car in cars)
             
             stats_html = f"""
             <h2 style="color: #2E86C1;">סטטיסטיקות מערכת השכרת רכבים</h2>
-            
             <h3>נתונים כלליים:</h3>
             <ul>
                 <li><b>סה"כ רכבים במערכת:</b> {total_cars}</li>
@@ -631,35 +447,13 @@ class SimpleChartsWidget(QTabWidget):
                 <li><b>מחיר ממוצע ליום:</b> {avg_price:.0f} ₪</li>
                 <li><b>מספר מיקומים:</b> {len(locations)}</li>
             </ul>
-            
-            <h3>התפלגות לפי סוג:</h3>
-            <ul>
             """
-            
-            for item in stats_data.get("data", []):
-                percentage = (item["count"] / total_cars * 100) if total_cars > 0 else 0
-                stats_html += f"<li><b>{item['type']}:</b> {item['count']} רכבים ({percentage:.1f}%)</li>"
-            
-            stats_html += """
-            </ul>
-            
-            <h3>מיקומים:</h3>
-            <ul>
-            """
-            
-            for location in sorted(locations):
-                location_cars = [car for car in cars if car.get("location") == location]
-                stats_html += f"<li><b>{location}:</b> {len(location_cars)} רכבים</li>"
-            
-            stats_html += "</ul>"
             
             if hasattr(self, 'stats_text') and self.stats_text:
                 self.stats_text.setHtml(stats_html)
             
         except Exception as e:
             print(f"שגיאה ברענון סטטיסטיקות: {e}")
-            if hasattr(self, 'stats_text') and self.stats_text:
-                self.stats_text.setPlainText(f"שגיאה בטעינת סטטיסטיקות: {e}")
     
     def safe_refresh_all_charts(self):
         """רענון בטוח של כל הגרפים"""
@@ -684,7 +478,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setup_ui()
-        self.load_initial_data()
     
     def setup_ui(self):
         self.setWindowTitle("מערכת השכרת רכבים - Car Rental System")
@@ -710,15 +503,18 @@ class MainWindow(QMainWindow):
         # יצירת טאבים ראשיים
         main_tabs = QTabWidget()
         
-        # טאב רכבים (קיים)
-        cars_tab = self.create_cars_tab()
+        # טאב רכבים
+        if CARS_WIDGET_AVAILABLE:
+            cars_tab = CarsWidget()
+        else:
+            cars_tab = SimpleCarsWidget()
         main_tabs.addTab(cars_tab, "🚗 חיפוש רכבים")
         
         # טאב גרפים
         charts_tab = SimpleChartsWidget()
         main_tabs.addTab(charts_tab, "📊 סטטיסטיקות וגרפים")
         
-        # טאב יועץ AI מתקדם (חדש!)
+        # טאב יועץ AI מתקדם
         if AI_CHAT_AVAILABLE:
             try:
                 ai_chat_tab = AIChatWidget()
@@ -726,99 +522,28 @@ class MainWindow(QMainWindow):
                 print("✅ טאב יועץ AI נוסף בהצלחה")
             except Exception as e:
                 print(f"⚠️ שגיאה בטעינת יועץ AI: {e}")
-                # צור טאב שגיאה
                 error_tab = QWidget()
                 error_layout = QVBoxLayout()
-                error_label = QLabel(f"""
-                יועץ ה-AI זמנית לא זמין
-                
-                שגיאה: {str(e)}
-                
-                וודא שהשרת רץ והקבצים קיימים:
-                - backend/api/ai_endpoints.py
-                - ai-service/rag_service.py
-                - frontend/components/ai_chat_widget.py
-                """)
+                error_label = QLabel(f"יועץ ה-AI זמנית לא זמין. שגיאה: {str(e)}")
                 error_label.setStyleSheet("color: #e67e22; padding: 20px; background: #fef9e7; border: 2px solid #f39c12; border-radius: 8px;")
                 error_layout.addWidget(error_label)
                 error_tab.setLayout(error_layout)
                 main_tabs.addTab(error_tab, "⚠️ יועץ AI")
         else:
-            # צור טאב הודעה על היעדר יועץ AI
             placeholder_tab = QWidget()
             placeholder_layout = QVBoxLayout()
-            placeholder_label = QLabel("""
-            🤖 יועץ AI לא זמין
-            
-            כדי להפעיל את יועץ ה-AI, צור את הקבצים הבאים:
-            
-            1. frontend/components/ai_chat_widget.py
-            2. backend/api/ai_endpoints.py  
-            3. ai-service/rag_service.py
-            
-            ווודא ש-Docker עם Ollama + ChromaDB רצים.
-            
-            לאחר מכן הפעל מחדש את האפליקציה.
-            """)
-            placeholder_label.setStyleSheet("color: #7f8c8d; padding: 30px; font-size: 14px;")
+            placeholder_label = QLabel("🤖 יועץ AI לא זמין")
             placeholder_layout.addWidget(placeholder_label)
             placeholder_tab.setLayout(placeholder_layout)
             main_tabs.addTab(placeholder_tab, "🤖 יועץ AI")
         
         main_layout.addWidget(main_tabs)
-        
         central_widget.setLayout(main_layout)
         
         # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("מוכן לחיפוש רכבים")
-    
-    def create_cars_tab(self):
-        """יצירת טאב חיפוש הרכבים"""
-        cars_widget = QWidget()
-        layout = QVBoxLayout()
-        
-        # רכיב חיפוש
-        self.search_widget = SearchWidget()
-        self.search_widget.search_requested.connect(self.perform_search)
-        layout.addWidget(self.search_widget)
-        
-        # Layout תחתון (טבלה + פרטים)
-        bottom_layout = QHBoxLayout()
-        
-        # טבלת רכבים
-        self.cars_table = CarsTableWidget()
-        self.cars_table.car_selected.connect(self.on_car_selected)
-        bottom_layout.addWidget(self.cars_table, 2)
-        
-        # פרטי רכב
-        self.car_details = CarDetailsWidget()
-        bottom_layout.addWidget(self.car_details, 1)
-        
-        layout.addLayout(bottom_layout)
-        cars_widget.setLayout(layout)
-        
-        return cars_widget
-    
-    def load_initial_data(self):
-        """טעינת נתונים ראשוניים"""
-        self.status_bar.showMessage("טוען רכבים...")
-        cars = CarRentalAPI.get_all_cars()
-        self.cars_table.update_cars(cars)
-        self.status_bar.showMessage(f"נטענו {len(cars)} רכבים")
-    
-    def perform_search(self, query):
-        """ביצוע חיפוש"""
-        self.status_bar.showMessage("מחפש...")
-        cars = CarRentalAPI.search_cars(query)
-        self.cars_table.update_cars(cars)
-        self.status_bar.showMessage(f"נמצאו {len(cars)} רכבים")
-    
-    def on_car_selected(self, car):
-        """טיפול בבחירת רכב"""
-        self.car_details.update_car_details(car)
-        self.status_bar.showMessage(f"נבחר: {car['make']} {car['model']}")
 
 # ====================
 # פונקציה ראשית
@@ -844,27 +569,11 @@ def main():
         window.show()
         
         # הצגת הודעת ברכה בstatus bar
-        welcome_msg = f"שלום {session_manager.get_user_name()}"
-        if session_manager.is_admin():
-            welcome_msg += " (אדמין)"
-        window.status_bar.showMessage(welcome_msg)
+        window.status_bar.showMessage(f"שלום {session_manager.get_user_name()}")
         
-        print("מערכת השכרת רכבים הופעלה בהצלחה!")
-        if not CHARTS_AVAILABLE:
-            print("⚠️  QtCharts לא זמין - התקן: pip install PySide6-Addons")
-        else:
-            print("📊 גרפים זמינים ופעילים")
-        
-        if not AI_CHAT_AVAILABLE:
-            print("⚠️  יועץ AI לא זמין - צור קבצי AI")
-        else:
-            print("🤖 יועץ AI זמין ופעיל")
-        
-        # הפעלת לולאת האירועים
         sys.exit(app.exec())
     else:
-        # המשתמש ביטל את הכניסה
-        print("הכניסה בוטלה")
+        # המשתמש לא התחבר או ביטל
         sys.exit(0)
 
 if __name__ == "__main__":
