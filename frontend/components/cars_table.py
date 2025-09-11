@@ -1,25 +1,48 @@
 """
-מסך ראשי בעברית:
-- Hero עליון עם תמונת רקע, כותרת, ותיבת חיפוש
-- מתחתיו: רשימת כרטיסי רכבים (שמאל) + ריבוע פילטרים (ימין)
-- כפתור 'הזמן רכב' בכל כרטיס פותח דיאלוג חשבונית/הזמנה
-- תמונות רכבים: image_url בדאטה, או קובץ מקומי images/<make>_<model>.jpg, אחרת פלייסהולדר
+מסך בעברית (PySide6) עם נתונים מה-API:
+- Header עליון: 'שלום מנהל המערכת' + סטטוס שרת + כמות רכבים זמינים + כפתור ☰ לפתיחת פאנל צד
+- פאנל צד (Drawer) עם 'סטטיסטיקות' ו'יועץ AI' (נפתח/נסגר בלחיצה)
+- HERO עם תמונת הרקע שסיפקת ושורת חיפוש
+- מתחת: רשימת כרטיסי רכבים (שמאל) + פאנל פילטרים (ימין, רוחב קבוע, כולל כפתור 'איפוס')
+- כפתור 'הזמן רכב' בכל כרטיס פותח דיאלוג הזמנה
+- שורת סיכום בתחתית הרשימה: סה״כ רכבים זמינים (לפי הסינון)
+- נתונים נטענים מה-API (ללא דמו). אפשר סינון בצד השרת או בצד הלקוח (דגל SERVER_FILTERING).
 """
 
 import os
 import requests
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QComboBox,
-    QGroupBox, QGridLayout, QTextEdit, QFrame, QMessageBox, QDialog, QDateEdit,
-    QFormLayout, QDialogButtonBox, QScrollArea, QSizePolicy, QApplication, QSpacerItem
+    QGroupBox, QGridLayout, QFrame, QMessageBox, QDialog, QDateEdit,
+    QFormLayout, QDialogButtonBox, QApplication, QScrollArea, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, QDate, Signal, QSize, QByteArray
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import Qt, QTimer, QDate, Signal, QSize, QPropertyAnimation
+from PySide6.QtGui import QFont, QPixmap, QPainter
 
+# ===== הגדרות API =====
 API_BASE_URL = "http://localhost:8000"
-HERO_IMAGE_PATH = "assets/hero.jpg"  # שים כאן את תמונת הרקע שלך (לדוגמה: /path/to/drivego_hero.jpg)
+API_CARS_URL = f"{API_BASE_URL}/api/cars"
+SERVER_FILTERING = True  # True = סינון בצד השרת דרך פרמטרים; False = סינון בצד הלקוח
+
+# תמונת הרקע של ה-HERO (מהודעתך)
+HERO_IMAGE_URL = ("https://lh3.googleusercontent.com/aida-public/"
+                  "AB6AXuA2xhXWzHKPKdydixhYmU3tlLkQ0SVhA5in4m8ahsJGtcmkGEIoLBc0HK5F5iWyOYikqEDLTXx7rMCHqkty7gjX4N3yJrLivkyGl1DO_sWOHmGWa_bP24ZN6tTGPMMkG56WQSvmCUBiM78eqTAo7NNUl3WuW2CRDRx9ZlsE-atCPHlbqICdEV0sKc7Or_Igb1GxkhVT03a_OrZZ-usetWeWEqK_tT5_e3vGu_9Kid-pFYJHzyKzjNKcaC8WcvO1E9XBZpemeblimol7")
+
+
+# ============================
+# עזרי רשת
+# ============================
+
+def http_get_json(url: str, params: Optional[dict] = None, timeout: int = 8):
+    try:
+        r = requests.get(url, params=params or {}, timeout=timeout)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        print(f"GET {url} failed: {e}")
+    return None
 
 
 # ============================
@@ -34,13 +57,13 @@ class BookingDialog(QDialog):
 
     def setup_ui(self):
         self.setWindowTitle("הזמנת רכב - חשבונית")
-        self.setMinimumSize(600, 700)
+        self.setMinimumSize(600, 680)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
 
         title = QLabel("חשבונית הזמנת רכב")
-        title.setFont(QFont("Rubik", 18, QFont.Bold))
+        title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: #1F3A8A; padding: 14px; background: #F1F5F9; border-radius: 12px;")
         layout.addWidget(title)
@@ -50,10 +73,9 @@ class BookingDialog(QDialog):
         car_layout = QGridLayout(car_group)
 
         def add_row(r, lbl, val):
-            l = QLabel(lbl); l.setAlignment(Qt.AlignRight); l.setFont(QFont("Rubik", 10, QFont.Bold))
-            v = QLabel(val); v.setAlignment(Qt.AlignLeft); v.setFont(QFont("Rubik", 10))
-            car_layout.addWidget(l, r, 0)
-            car_layout.addWidget(v, r, 1)
+            l = QLabel(lbl); l.setAlignment(Qt.AlignRight); l.setFont(QFont("Arial", 10, QFont.Bold))
+            v = QLabel(val); v.setAlignment(Qt.AlignLeft);  v.setFont(QFont("Arial", 10))
+            car_layout.addWidget(l, r, 0); car_layout.addWidget(v, r, 1)
 
         r = 0
         add_row(r, "יצרן:", str(self.car_data.get("make", ""))); r += 1
@@ -71,9 +93,9 @@ class BookingDialog(QDialog):
         cust_form.setLabelAlignment(Qt.AlignRight)
 
         self.first_name = QLineEdit()
-        self.last_name = QLineEdit()
-        self.email = QLineEdit()
-        self.phone = QLineEdit()
+        self.last_name  = QLineEdit()
+        self.email      = QLineEdit()
+        self.phone      = QLineEdit()
         cust_form.addRow("שם פרטי:", self.first_name)
         cust_form.addRow("שם משפחה:", self.last_name)
         cust_form.addRow("אימייל:", self.email)
@@ -82,17 +104,15 @@ class BookingDialog(QDialog):
 
         # תאריכים
         dates_group = QGroupBox("תאריכי השכרה")
-        dates_form = QFormLayout(dates_group)
+        dates_form  = QFormLayout(dates_group)
         dates_form.setFormAlignment(Qt.AlignRight)
         dates_form.setLabelAlignment(Qt.AlignRight)
 
-        self.start_date = QDateEdit(); self.start_date.setCalendarPopup(True)
-        self.start_date.setDate(QDate.currentDate())
-        self.end_date = QDateEdit(); self.end_date.setCalendarPopup(True)
-        self.end_date.setDate(QDate.currentDate().addDays(3))
+        self.start_date = QDateEdit(); self.start_date.setCalendarPopup(True); self.start_date.setDate(QDate.currentDate())
+        self.end_date   = QDateEdit(); self.end_date.setCalendarPopup(True);   self.end_date.setDate(QDate.currentDate().addDays(3))
 
         dates_form.addRow("תאריך תחילה:", self.start_date)
-        dates_form.addRow("תאריך סיום:", self.end_date)
+        dates_form.addRow("תאריך סיום:",   self.end_date)
         layout.addWidget(dates_group)
 
         # כפתורים
@@ -105,7 +125,148 @@ class BookingDialog(QDialog):
 
 
 # ============================
-# Hero עליון עם רקע וחיפוש
+# עזר לטעינת תמונות
+# ============================
+
+def load_pixmap_from_url(url: str) -> QPixmap:
+    try:
+        r = requests.get(url, timeout=6)
+        if r.status_code == 200:
+            pm = QPixmap()
+            if pm.loadFromData(r.content):
+                return pm
+    except Exception:
+        pass
+    return QPixmap()
+
+def load_car_pixmap(car: Dict, desired: QSize) -> QPixmap:
+    url = car.get("image_url")
+    if url:
+        pm = load_pixmap_from_url(url)
+        if not pm.isNull():
+            return pm.scaled(desired, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    make  = str(car.get("make", "")).lower().replace(" ", "_")
+    model = str(car.get("model","")).lower().replace(" ", "_")
+    path = os.path.join("images", f"{make}_{model}.jpg")
+    if os.path.exists(path):
+        pm = QPixmap(path)
+        if not pm.isNull():
+            return pm.scaled(desired, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    ph = QPixmap(desired); ph.fill(Qt.lightGray); return ph
+
+
+# ============================
+# תפריט צד (Drawer)
+# ============================
+
+class SideDrawer(QFrame):
+    navigate_stats = Signal()
+    navigate_ai    = Signal()
+
+    def __init__(self, width: int = 260):
+        super().__init__()
+        self._target_width = width
+        self.setMaximumWidth(0)
+        self.setMinimumWidth(0)
+        self.setStyleSheet("""
+            QFrame { background:#FFFFFF; border:1px solid #E6EAF0; border-radius:12px; }
+        """)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12,12,12,12); v.setSpacing(8)
+
+        title = QLabel("ניווט")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignRight)
+        v.addWidget(title)
+
+        def nav_btn(text):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("QPushButton{ text-align:right; padding:10px 12px; border:none; border-radius:8px;} QPushButton:hover{background:#F1F5F9;}")
+            return b
+
+        btn_stats = nav_btn("סטטיסטיקות")
+        btn_ai    = nav_btn("יועץ AI")
+        btn_stats.clicked.connect(self.navigate_stats.emit)
+        btn_ai.clicked.connect(self.navigate_ai.emit)
+        v.addWidget(btn_stats)
+        v.addWidget(btn_ai)
+        v.addStretch(1)
+
+        self.anim = QPropertyAnimation(self, b"maximumWidth")
+        self.anim.setDuration(220)
+
+    def toggle(self):
+        if self.maximumWidth() == 0: self.open()
+        else: self.close()
+
+    def open(self):
+        self.anim.stop(); self.anim.setStartValue(self.maximumWidth()); self.anim.setEndValue(self._target_width); self.anim.start()
+
+    def close(self):
+        self.anim.stop(); self.anim.setStartValue(self.maximumWidth()); self.anim.setEndValue(0); self.anim.start()
+
+
+# ============================
+# Header עליון
+# ============================
+
+class TopBar(QFrame):
+    toggle_drawer_requested = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.setStyleSheet("""
+            QFrame#TopBar { background:#FFFFFF; border-bottom:1px solid #E6EAF0; }
+            QLabel.counter { color:#0F172A; font-weight:600; }
+        """)
+        self.setObjectName("TopBar")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(16,8,16,8)
+        h.setSpacing(10)
+
+        self.menu_btn = QPushButton("☰")
+        self.menu_btn.setFixedSize(36, 32)
+        self.menu_btn.setCursor(Qt.PointingHandCursor)
+        self.menu_btn.setStyleSheet("QPushButton { border:1px solid #E6EAF0; border-radius:8px; background:#FFFFFF; } QPushButton:hover{background:#F8FAFC;}")
+        self.menu_btn.clicked.connect(self.toggle_drawer_requested.emit)
+        h.addWidget(self.menu_btn, 0, Qt.AlignLeft)
+
+        h.addStretch(1)
+
+        self.hello_lbl = QLabel("שלום מנהל המערכת")
+        self.hello_lbl.setFont(QFont("Arial", 12, QFont.Bold))
+        h.addWidget(self.hello_lbl, 0, Qt.AlignRight)
+
+        sep = QLabel("•"); sep.setStyleSheet("color:#94A3B8;"); h.addWidget(sep, 0, Qt.AlignRight)
+
+        self.status_dot = QLabel(); self.status_dot.setFixedSize(10,10); self.status_dot.setStyleSheet("background:#EF4444; border-radius:5px;")
+        self.status_text = QLabel("שרת: מנותק"); self.status_text.setStyleSheet("color:#334155;")
+        h.addWidget(self.status_text, 0, Qt.AlignRight)
+        h.addWidget(self.status_dot, 0, Qt.AlignRight)
+
+        sep2 = QLabel("•"); sep2.setStyleSheet("color:#94A3B8;"); h.addWidget(sep2, 0, Qt.AlignRight)
+
+        self.cars_count_lbl = QLabel("רכבים זמינים: 0")
+        self.cars_count_lbl.setObjectName("counter")
+        self.cars_count_lbl.setStyleSheet("color:#0F172A; font-weight:600;")
+        h.addWidget(self.cars_count_lbl, 0, Qt.AlignRight)
+
+    def update_status(self, server_connected: bool, available_count: int):
+        if server_connected:
+            self.status_dot.setStyleSheet("background:#22C55E; border-radius:5px;")
+            self.status_text.setText("שרת: מחובר")
+        else:
+            self.status_dot.setStyleSheet("background:#EF4444; border-radius:5px;")
+            self.status_text.setText("שרת: מנותק")
+        self.cars_count_lbl.setText(f"רכבים זמינים: {available_count}")
+
+
+# ============================
+# HERO
 # ============================
 
 class HeroSection(QFrame):
@@ -113,48 +274,35 @@ class HeroSection(QFrame):
 
     def __init__(self):
         super().__init__()
+        self.bg_pixmap = QPixmap()
         self.setup_ui()
+        self.load_background()
 
     def setup_ui(self):
-        self.setMinimumHeight(340)
-        # אם יש תמונה – נשים כרקע; אחרת צבע דיפולט
-        if os.path.exists(HERO_IMAGE_PATH):
-            self.setStyleSheet(f"""
-                QFrame {{
-                    border-radius: 16px;
-                    background-image: url('{HERO_IMAGE_PATH}');
-                    background-position: center;
-                    background-repeat: no-repeat;
-                    background-origin: content;
-                    background-clip: border;
-                }}
-            """)
-        else:
-            self.setStyleSheet("QFrame { border-radius: 16px; background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #CBD5E1, stop:1 #94A3B8); }")
+        self.setMinimumHeight(300)
+        self.setStyleSheet("QFrame { border-radius: 16px; }")
 
-        overlay = QVBoxLayout(self)
-        overlay.setContentsMargins(24, 24, 24, 24)
-        overlay.addStretch(1)
+        self.overlay = QVBoxLayout(self)
+        self.overlay.setContentsMargins(24, 24, 24, 24)
+        self.overlay.addStretch(1)
 
         title = QLabel("מצא את הרכב המושלם שלך")
-        title.setFont(QFont("Rubik", 28, QFont.Black))
-        title.setStyleSheet("color: white; text-shadow: 0 2px 8px rgba(0,0,0,0.35);")
+        title.setFont(QFont("Arial", 28, QFont.Black))
+        title.setStyleSheet("color: white;")
         title.setAlignment(Qt.AlignHCenter)
-        overlay.addWidget(title)
+        self.overlay.addWidget(title)
 
         subtitle = QLabel("חפש רכבים לפי עיר, דגם או סוג — קומפקט, משפחתי, שטח ועוד")
-        subtitle.setFont(QFont("Rubik", 12))
+        subtitle.setFont(QFont("Arial", 12))
         subtitle.setStyleSheet("color: white;")
         subtitle.setAlignment(Qt.AlignHCenter)
-        overlay.addWidget(subtitle)
+        self.overlay.addWidget(subtitle)
 
-        # תיבת חיפוש מרכזית
         bar = QHBoxLayout()
-        bar.setSpacing(0)
-        bar.setContentsMargins(0, 16, 0, 24)
+        bar.setSpacing(0); bar.setContentsMargins(0, 16, 0, 24)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("חיפוש רכבים לפי עיר, דגם או סוג...")
+        self.search_edit.setPlaceholderText("חיפוש רכבים לפי עיר, דגם או סוג…")
         self.search_edit.setMinimumHeight(44)
         self.search_edit.setStyleSheet("""
             QLineEdit {
@@ -168,67 +316,39 @@ class HeroSection(QFrame):
                 min-width: 380px;
             }
         """)
-        search_btn = QPushButton("חיפוש")
-        search_btn.setMinimumHeight(44)
-        search_btn.setCursor(Qt.PointingHandCursor)
-        search_btn.setStyleSheet("""
+        btn = QPushButton("חיפוש")
+        btn.setMinimumHeight(44); btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
             QPushButton {
-                background-color: #EF4444;
-                color: white;
-                padding: 0 18px;
-                border-top-right-radius: 12px;
-                border-bottom-right-radius: 12px;
-                font-weight: 700;
+                background-color: #EF4444; color: white; padding: 0 18px;
+                border-top-right-radius: 12px; border-bottom-right-radius: 12px; font-weight: 700;
             }
             QPushButton:hover { background-color: #DC2626; }
         """)
-        search_btn.clicked.connect(lambda: self.search_submitted.emit(self.search_edit.text().strip()))
-        bar.addStretch(1)
-        bar.addWidget(self.search_edit, 0)
-        bar.addWidget(search_btn, 0)
-        bar.addStretch(1)
-        overlay.addLayout(bar)
+        btn.clicked.connect(lambda: self.search_submitted.emit(self.search_edit.text().strip()))
+        bar.addStretch(1); bar.addWidget(self.search_edit, 0); bar.addWidget(btn, 0); bar.addStretch(1)
 
-        overlay.addStretch(2)
+        self.overlay.addLayout(bar)
+        self.overlay.addStretch(2)
+
+    def load_background(self):
+        pm = load_pixmap_from_url(HERO_IMAGE_URL)
+        if pm.isNull():
+            self.setStyleSheet(self.styleSheet() + "QFrame { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #64748B, stop:1 #475569); }")
+        else:
+            self.bg_pixmap = pm
+            self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.bg_pixmap.isNull():
+            scaled = self.bg_pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            painter = QPainter(self); painter.drawPixmap(0, 0, scaled); painter.end()
 
 
 # ============================
 # כרטיס רכב
 # ============================
-
-def load_pixmap_for_car(car: Dict, desired_size: QSize) -> QPixmap:
-    """
-    טעינת תמונה לרכב לפי סדר עדיפויות:
-      1) image_url בשדה הדאטה
-      2) קובץ מקומי images/<make>_<model>.jpg (למשל images/toyota_corolla.jpg)
-      3) החזרה של פלייסהולדר
-    """
-    # 1) URL
-    url = car.get("image_url")
-    if url:
-        try:
-            r = requests.get(url, timeout=6)
-            if r.status_code == 200:
-                pm = QPixmap()
-                if pm.loadFromData(QByteArray(r.content)):
-                    return pm.scaled(desired_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        except Exception:
-            pass
-
-    # 2) local file
-    make = str(car.get("make", "")).lower().replace(" ", "_")
-    model = str(car.get("model", "")).lower().replace(" ", "_")
-    local_path = os.path.join("images", f"{make}_{model}.jpg")
-    if os.path.exists(local_path):
-        pm = QPixmap(local_path)
-        if not pm.isNull():
-            return pm.scaled(desired_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-    # 3) placeholder
-    ph = QPixmap(desired_size)
-    ph.fill(Qt.lightGray)
-    return ph
-
 
 class CarCardWidget(QFrame):
     booked = Signal(dict)
@@ -238,85 +358,64 @@ class CarCardWidget(QFrame):
         self.car = car
         self.setObjectName("CarCard")
         self.setStyleSheet("""
-            QFrame#CarCard {
-                background: #FFFFFF;
-                border: 1px solid #E6EAF0;
-                border-radius: 12px;
-            }
+            QFrame#CarCard { background: #FFFFFF; border: 1px solid #E6EAF0; border-radius: 12px; }
             QFrame#CarCard:hover { border-color: #D0D7E2; }
-            QLabel.card-sub { color:#667085; }
+            QLabel.subtle { color:#667085; }
         """)
         self.build()
 
     def build(self):
         root = QHBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(14)
+        root.setContentsMargins(12, 12, 12, 12); root.setSpacing(14)
 
-        # תמונה
-        img_label = QLabel()
-        img_label.setFixedSize(360, 180)
-        pm = load_pixmap_for_car(self.car, img_label.size())
-        img_label.setPixmap(pm)
-        img_label.setScaledContents(False)
-        img_label.setStyleSheet("border-radius: 10px; background:#F4F6F7;")
-        root.addWidget(img_label, 0)
+        img = QLabel(); img.setFixedSize(360, 180)
+        pm = load_car_pixmap(self.car, img.size()); img.setPixmap(pm)
+        img.setStyleSheet("border-radius: 10px; background:#F4F6F7;")
+        img.setScaledContents(False)
+        root.addWidget(img, 0)
 
-        # מרכז – טקסט
         center = QVBoxLayout()
-        title = QLabel(self.title_text()); title.setFont(QFont("Rubik", 12, QFont.Bold))
-        sub = QLabel(self.subtitle_text()); sub.setObjectName("card-sub")
-        specs = QLabel(self.specs_text()); specs.setObjectName("card-sub")
-        center.addWidget(title)
-        center.addWidget(sub)
-        center.addWidget(specs)
-        center.addStretch(1)
+        title = QLabel(self.title_text()); title.setFont(QFont("Arial", 12, QFont.Bold))
+        sub   = QLabel(self.subtitle_text()); sub.setObjectName("subtle")
+        specs = QLabel(self.specs_text());    specs.setObjectName("subtle")
+        center.addWidget(title); center.addWidget(sub); center.addWidget(specs); center.addStretch(1)
         root.addLayout(center, 1)
 
-        # ימין – מחיר + הזמנה
         right = QVBoxLayout()
         price_row = QHBoxLayout()
-        price = QLabel(self.price_text()); price.setFont(QFont("Rubik", 16, QFont.Bold))
+        price = QLabel(self.price_text()); price.setFont(QFont("Arial", 16, QFont.Bold))
         per = QLabel("/יום")
         price_row.addWidget(price); price_row.addWidget(per); price_row.addStretch(1)
         right.addLayout(price_row)
 
         btn = QPushButton("הזמן רכב")
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setFixedWidth(140)
+        btn.setCursor(Qt.PointingHandCursor); btn.setFixedWidth(140)
         btn.setStyleSheet("""
             QPushButton {
-                background-color: #EF4444;
-                color: white;
-                padding: 10px 14px;
-                border-radius: 10px;
-                font-weight: 700;
+                background-color: #EF4444; color: white; padding: 10px 14px;
+                border-radius: 10px; font-weight: 700;
             }
             QPushButton:hover { background-color: #DC2626; }
             QPushButton:disabled { background-color: #CCCCCC; color:#666666; }
         """)
         btn.setEnabled(self.car.get("available", True))
         btn.clicked.connect(lambda: self.booked.emit(self.car))
-        right.addStretch(1)
-        right.addWidget(btn, 0, Qt.AlignRight)
+        right.addStretch(1); right.addWidget(btn, 0, Qt.AlignRight)
         root.addLayout(right)
 
     def title_text(self) -> str:
-        t = str(self.car.get("car_type", ""))
-        return t.capitalize() if t else "רכב"
-
+        t = str(self.car.get("car_type", "")); return t.capitalize() if t else "רכב"
     def subtitle_text(self) -> str:
         return f"{self.car.get('make','')} {self.car.get('model','')} או דומה"
-
     def specs_text(self) -> str:
-        seats = self.car.get('seats', '?')
-        trans = "אוטומט"
-        return f"{seats} מושבים | {trans}"
-
+        return f"{self.car.get('seats', '?')} מושבים | אוטומט"
     def price_text(self) -> str:
-        p = self.car.get('daily_rate', 0)
-        return f"{p} ₪"
+        return f"{self.car.get('daily_rate', 0)} ₪"
 
+
+# ============================
+# רשימת כרטיסים + שורת סיכום
+# ============================
 
 class CarsCardsList(QWidget):
     car_booked = Signal(dict)
@@ -324,122 +423,128 @@ class CarsCardsList(QWidget):
     def __init__(self):
         super().__init__()
         self.data: List[Dict] = []
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("QScrollArea { border: none; }")
-
-        self.container = QWidget()
-        self.vbox = QVBoxLayout(self.container)
+        self.vbox = QVBoxLayout(self)
         self.vbox.setContentsMargins(0, 0, 0, 0)
         self.vbox.setSpacing(14)
-        self.vbox.addStretch(1)
 
-        self.scroll.setWidget(self.container)
-        layout.addWidget(self.scroll)
+        self.cards_container = QVBoxLayout()
+        self.cards_container.setSpacing(14)
+        self.vbox.addLayout(self.cards_container)
+
+        self.total_label = QLabel("")
+        self.total_label.setAlignment(Qt.AlignRight)
+        self.total_label.setStyleSheet("background:#F1F5F9; border-radius:10px; padding:8px 12px; color:#0F172A; font-weight:600;")
+        self.vbox.addWidget(self.total_label)
 
     def set_cars(self, cars: List[Dict]):
         self.data = cars
-        # נקה (השאר stretch)
-        for i in reversed(range(self.vbox.count()-1)):
-            w = self.vbox.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-        # הוסף כרטיסים
+        for i in reversed(range(self.cards_container.count())):
+            item = self.cards_container.itemAt(i)
+            w = item.widget()
+            if w: w.setParent(None)
         for car in cars:
             card = CarCardWidget(car)
             card.booked.connect(self.car_booked.emit)
-            self.vbox.insertWidget(self.vbox.count()-1, card)
+            self.cards_container.addWidget(card)
+
+        available = sum(1 for c in cars if c.get("available", True))
+        total = len(cars)
+        self.total_label.setText(f"סה״כ רכבים זמינים: {available} (מתוך {total})")
 
 
 # ============================
-# פאנל פילטרים (ימין)
+# פאנל פילטרים – רוחב קבוע + איפוס
 # ============================
 
 class FiltersPanel(QWidget):
     filters_changed = Signal()
     search_clicked = Signal(str)
+    reset_clicked  = Signal()
 
     def __init__(self):
         super().__init__()
         self.setup_ui()
 
     def setup_ui(self):
-        self.setMinimumWidth(360)
+        self.setFixedWidth(320)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
-
-        header = QLabel("סינון חיפוש")
-        header.setFont(QFont("Rubik", 16, QFont.Bold))
-        header.setStyleSheet("color:#0F172A;")
-        root.addWidget(header)
-
-        form_card = QFrame()
-        form_card.setStyleSheet("""
-            QFrame { background: #FFFFFF; border: 1px solid #E6EAF0; border-radius: 12px; }
-            QLabel  { font-size: 12px; color:#334155; }
+        card = QFrame(self)
+        card.setStyleSheet("""
+            QFrame { background:#FFFFFF; border:1px solid #E6EAF0; border-radius:12px; }
+            QLabel  { font-size: 12.5px; color:#334155; margin: 2px 2px 6px 2px; }
             QLineEdit, QComboBox, QDateEdit {
-                background: #FFFFFF;
-                border: 1px solid #E2E8F0;
-                border-radius: 10px;
-                min-height: 34px;
-                padding: 0 10px;
+                background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px;
+                min-height: 40px; padding: 0 10px; font-size: 13px;
             }
         """)
-        form_layout = QVBoxLayout(form_card)
-        form_layout.setContentsMargins(16, 16, 16, 16)
-        form_layout.setSpacing(10)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0,0,0,0)
+        root.addWidget(card)
 
-        # שדות
-        self.free_search = QLineEdit(); self.free_search.setPlaceholderText("עיר / דגם / סוג...")
+        form = QVBoxLayout(card)
+        form.setContentsMargins(16,16,16,16)
+        form.setSpacing(16)
+
+        self.free_search = QLineEdit(); self.free_search.setPlaceholderText("עיר / דגם / סוג…")
         self.free_search.returnPressed.connect(lambda: self.search_clicked.emit(self.free_search.text().strip()))
-        form_layout.addWidget(QLabel("חיפוש חופשי"))
-        form_layout.addWidget(self.free_search)
+        form.addWidget(QLabel("חיפוש חופשי"))
+        form.addWidget(self.free_search)
 
-        self.size_combo = QComboBox()
-        self.size_combo.addItems(["הכל", "Small", "Medium", "Large"])
-        form_layout.addWidget(QLabel("גודל הרכב"))
-        form_layout.addWidget(self.size_combo)
+        self.size_combo = QComboBox(); self.size_combo.addItems(["הכל", "Small", "Medium", "Large"])
+        form.addWidget(QLabel("גודל הרכב")); form.addWidget(self.size_combo)
 
-        self.supplier_combo = QComboBox()
-        self.supplier_combo.addItems(["הכל", "Hertz", "Avis", "Budget", "Enterprise"])
-        form_layout.addWidget(QLabel("ספק"))
-        form_layout.addWidget(self.supplier_combo)
+        self.supplier_combo = QComboBox(); self.supplier_combo.addItems(["הכל", "Hertz", "Avis", "Budget", "Enterprise"])
+        form.addWidget(QLabel("ספק")); form.addWidget(self.supplier_combo)
 
-        self.price_combo = QComboBox()
-        self.price_combo.addItems(["כל מחיר", "עד 200₪", "200-300₪", "300-400₪", "מעל 400₪"])
-        form_layout.addWidget(QLabel("טווח מחיר"))
-        form_layout.addWidget(self.price_combo)
+        self.price_combo = QComboBox(); self.price_combo.addItems(["כל מחיר", "עד 200₪", "200-300₪", "300-400₪", "מעל 400₪"])
+        form.addWidget(QLabel("טווח מחיר")); form.addWidget(self.price_combo)
 
-        btn = QPushButton("חפש")
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet("""
+        self.start_date = QDateEdit(); self.start_date.setCalendarPopup(True); self.start_date.setDate(QDate.currentDate())
+        self.end_date   = QDateEdit(); self.end_date.setCalendarPopup(True);   self.end_date.setDate(QDate.currentDate().addDays(3))
+        form.addWidget(QLabel("תאריך התחלה")); form.addWidget(self.start_date)
+        form.addWidget(QLabel("תאריך סיום"));   form.addWidget(self.end_date)
+
+        btn_row = QHBoxLayout()
+        btn_search = QPushButton("חפש")
+        btn_search.setCursor(Qt.PointingHandCursor)
+        btn_search.setStyleSheet("""
             QPushButton {
-                background-color: #EF4444;
-                color: white;
-                padding: 10px;
-                border-radius: 10px;
-                font-weight: 700;
+                background-color:#EF4444; color:white; padding:10px;
+                border-radius:10px; font-weight:700; font-size:14px;
             }
-            QPushButton:hover { background-color: #DC2626; }
+            QPushButton:hover { background-color:#DC2626; }
         """)
-        btn.clicked.connect(lambda: self.search_clicked.emit(self.free_search.text().strip()))
-        form_layout.addWidget(btn)
+        btn_search.clicked.connect(lambda: self.search_clicked.emit(self.free_search.text().strip()))
+        btn_row.addWidget(btn_search)
 
-        root.addWidget(form_card)
-        root.addStretch(1)
+        btn_reset = QPushButton("איפוס")
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setStyleSheet("""
+            QPushButton {
+                background-color:#FFFFFF; color:#0F172A; padding:10px;
+                border:1px solid #E2E8F0; border-radius:10px; font-weight:600; font-size:14px;
+            }
+            QPushButton:hover { background-color:#F8FAFC; }
+        """)
+        btn_reset.clicked.connect(self.reset_filters)
+        btn_row.addWidget(btn_reset)
 
-        # חיבור שינויי פילטרים
+        form.addLayout(btn_row)
+
         self.size_combo.currentIndexChanged.connect(self.filters_changed.emit)
         self.supplier_combo.currentIndexChanged.connect(self.filters_changed.emit)
         self.price_combo.currentIndexChanged.connect(self.filters_changed.emit)
+
+    def reset_filters(self):
+        self.free_search.clear()
+        self.size_combo.setCurrentIndex(0)
+        self.supplier_combo.setCurrentIndex(0)
+        self.price_combo.setCurrentIndex(0)
+        self.start_date.setDate(QDate.currentDate())
+        self.end_date.setDate(QDate.currentDate().addDays(3))
+        self.reset_clicked.emit()
+        self.search_clicked.emit("")
 
 
 # ============================
@@ -449,103 +554,120 @@ class FiltersPanel(QWidget):
 class CarsWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.local_cars_data: List[Dict] = []
-        self.external_cars_data: List[Dict] = []
         self.all_cars_data: List[Dict] = []
+        self.server_connected: bool = False
         self.setup_ui()
-        self.load_all_cars()
+        self.load_all_from_api()   # טוען רשימה התחלתית מה-API
+        self.apply_filters()       # מציג לפי מצב ראשוני
 
-        # רענון נתונים כל 30 שניות
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.load_all_cars)
+        self.refresh_timer.timeout.connect(self.load_all_from_api)
         self.refresh_timer.start(30000)
 
+    # ---------- UI ----------
     def setup_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(16)
+        root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
-        # 1) Hero
+        self.topbar = TopBar()
+        self.topbar.toggle_drawer_requested.connect(self.on_toggle_drawer)
+        root.addWidget(self.topbar)
+
+        self.page_scroll = QScrollArea(); self.page_scroll.setWidgetResizable(True)
+        self.page_scroll.setStyleSheet("QScrollArea { border: none; }")
+        root.addWidget(self.page_scroll)
+
+        outer = QWidget(); self.page_scroll.setWidget(outer)
+        outer_h = QHBoxLayout(outer); outer_h.setContentsMargins(16,16,16,16); outer_h.setSpacing(16)
+
+        self.drawer = SideDrawer(width=260)
+        self.drawer.navigate_stats.connect(lambda: QMessageBox.information(self, "סטטיסטיקות", "כאן יוצגו סטטיסטיקות (TODO)."))
+        self.drawer.navigate_ai.connect(lambda: QMessageBox.information(self, "יועץ AI", "כאן יופיע יועץ ה-AI (TODO)."))
+        outer_h.addWidget(self.drawer, 0, Qt.AlignTop)
+
+        main_col = QWidget(); main_v = QVBoxLayout(main_col); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(16)
+
         self.hero = HeroSection()
         self.hero.search_submitted.connect(self.on_top_search)
-        root.addWidget(self.hero)
+        main_v.addWidget(self.hero)
 
-        # 2) אזור התוכן – כרטיסים + פילטרים
-        content = QHBoxLayout()
-        content.setSpacing(16)
+        content = QHBoxLayout(); content.setSpacing(16)
 
-        # שמאל: רשימת כרטיסים
         left = QVBoxLayout()
-        header = QLabel("רכבים זמינים")
-        header.setFont(QFont("Rubik", 18, QFont.Bold))
-        header.setStyleSheet("color:#0F172A;")
-        left.addWidget(header)
-
         self.cards_list = CarsCardsList()
         self.cards_list.car_booked.connect(self.on_car_booked)
-        left.addWidget(self.cards_list, 1)
+        left.addWidget(self.cards_list, 0)
         left_wrap = QWidget(); left_wrap.setLayout(left)
-        content.addWidget(left_wrap, 5)
+        content.addWidget(left_wrap, 1)
 
-        # ימין: פילטרים
         self.filters = FiltersPanel()
         self.filters.search_clicked.connect(self.on_side_search)
+        self.filters.reset_clicked.connect(self.apply_filters)
         self.filters.filters_changed.connect(self.apply_filters)
-        content.addWidget(self.filters, 3)
+        content.addWidget(self.filters, 0, Qt.AlignTop | Qt.AlignRight)
 
-        root.addLayout(content)
+        main_v.addLayout(content)
+        outer_h.addWidget(main_col, 1)
 
-    # ---------- Data ----------
-    def load_all_cars(self):
-        self.load_local_cars()
-        self.load_external_cars()
-        self.merge_cars_data()
-        self.apply_filters()
+    def on_toggle_drawer(self):
+        self.drawer.toggle()
 
-    def load_local_cars(self):
-        try:
-            resp = requests.get(f"{API_BASE_URL}/api/cars", timeout=5)
-            if resp.status_code == 200:
-                self.local_cars_data = resp.json()
-                for car in self.local_cars_data:
-                    car["source"] = "מקומי"
-                    car.setdefault("car_type", "medium")
-                    car.setdefault("available", True)
-        except Exception as e:
-            print(f"שגיאה בטעינת רכבים מקומיים: {e}")
-            self.local_cars_data = []
+    # ---------- API ----------
+    def load_all_from_api(self):
+        """טעינת כל הרכבים מה-API (ללא סינון) כדי שנוכל לדעת את המצב הכללי.
+           אם לא קיים endpoint כזה – עדיין ננסה לעבוד בסינון שרת עם פרמטרים ב-apply_filters()."""
+        data = http_get_json(API_CARS_URL)
+        if isinstance(data, list):
+            self.all_cars_data = data
+            self.server_connected = True
+        else:
+            # אם אין /api/cars ללא פרמטרים – לא נכשל, רק נסמן מצב שרת בהתאם
+            self.server_connected = data is not None
+        # רענון הסטטוס והספירה בטופ-בר (על בסיס מה שמוצג כרגע)
+        current = getattr(self, "_last_shown_cars", [])
+        available = sum(1 for c in current if c.get("available", True))
+        self.topbar.update_status(self.server_connected, available)
 
-    def load_external_cars(self):
-        # כולל image_url לכל רכב (מקורות חופשיים). אפשר להחליף ל-URL משלך או לקבצים מקומיים.
-        self.external_cars_data = [
-            {"supplier":"Hertz","make":"Toyota","model":"Corolla","year":2023,"car_type":"compact","daily_rate":180,"seats":5,"features":["GPS","A/C","Bluetooth"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1619767886558-efdc259cde1b?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Hertz","make":"Nissan","model":"Versa","year":2023,"car_type":"compact","daily_rate":190,"seats":5,"features":["GPS","A/C"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1549921296-3f21b18fd8e3?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Avis","make":"Honda","model":"Civic","year":2022,"car_type":"small","daily_rate":165,"seats":5,"features":["A/C","Bluetooth","Camera"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1549923746-c502d488b3ea?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Avis","make":"BMW","model":"X3","year":2023,"car_type":"large","daily_rate":450,"seats":5,"features":["GPS","Leather"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1619767886558-efdc259cde1b?q=80&w=1200&auto=format&fit=crop"},  # אפשר להחליף לתמונה ספציפית ל-BMW X3
-            {"supplier":"Budget","make":"Ford","model":"Escape","year":2022,"car_type":"medium","daily_rate":290,"seats":7,"features":["GPS","AWD","Rack"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1616789914313-66db8f5f85bb?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Budget","make":"Hyundai","model":"Elantra","year":2023,"car_type":"small","daily_rate":155,"seats":5,"features":["A/C","Bluetooth"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1617814076560-0d5c9b7a99cc?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Enterprise","make":"Mercedes","model":"C-Class","year":2023,"car_type":"large","daily_rate":520,"seats":5,"features":["GPS","Leather"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=1200&auto=format&fit=crop"},
-            {"supplier":"Enterprise","make":"Jeep","model":"Wrangler","year":2022,"car_type":"large","daily_rate":380,"seats":5,"features":["4WD","Convertible","GPS"],"source":"חיצוני","available":True,
-             "image_url":"https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=1200&auto=format&fit=crop"},  # החלף לפי הצורך
-        ]
+    def _build_server_params_from_filters(self) -> dict:
+        """ממפה את פילטרי ה-UI לפרמטרים לבקשת GET מהשרת.
+           שמנו גם אלטרנטיבות שמות (size/car_type, price_min/max) כדי להגדיל סיכוי תאימות."""
+        params = {}
+        q = self.filters.free_search.text().strip()
+        if q:
+            params["q"] = q
 
-    def merge_cars_data(self):
-        self.all_cars_data = []
-        for car in self.local_cars_data:
-            if car.get("make") != "string":
-                self.all_cars_data.append(car)
-        self.all_cars_data.extend(self.external_cars_data)
+        # גודל
+        size_map = {"Small": "small", "Medium": "medium", "Large": "large"}
+        size_ui = self.filters.size_combo.currentText()
+        if size_ui in size_map:
+            params["size"] = size_map[size_ui]
+            params["car_type"] = size_map[size_ui]  # אלטרנטיבי
 
-    # ---------- Filters & Search ----------
+        # ספק
+        supplier = self.filters.supplier_combo.currentText()
+        if supplier and supplier != "הכל":
+            params["supplier"] = supplier
+
+        # טווח מחיר
+        price = self.filters.price_combo.currentText()
+        if price == "עד 200₪":
+            params["price_max"] = 200
+        elif price == "200-300₪":
+            params["price_min"] = 201; params["price_max"] = 300
+        elif price == "300-400₪":
+            params["price_min"] = 301; params["price_max"] = 400
+        elif price == "מעל 400₪":
+            params["price_min"] = 401
+
+        # תאריכים (אם השרת תומך)
+        sd = self.filters.start_date.date().toString("yyyy-MM-dd")
+        ed = self.filters.end_date.date().toString("yyyy-MM-dd")
+        params["start_date"] = sd
+        params["end_date"] = ed
+
+        return params
+
+    # ---------- סינון והצגה ----------
     def on_top_search(self, text: str):
-        # ממלא גם את החיפוש החופשי בצד
         self.filters.free_search.setText(text)
         self.apply_filters()
 
@@ -553,62 +675,74 @@ class CarsWidget(QWidget):
         self.apply_filters()
 
     def apply_filters(self):
-        cars = list(self.all_cars_data)
+        """אם SERVER_FILTERING=True – שולחים פרמטרים לשרת ומציגים את התוצאה.
+           אחרת – מסננים את self.all_cars_data בצד הלקוח."""
+        cars: List[Dict] = []
 
-        # חיפוש חופשי
+        if SERVER_FILTERING:
+            params = self._build_server_params_from_filters()
+            data = http_get_json(API_CARS_URL, params=params)
+            if isinstance(data, list):
+                cars = data
+                self.server_connected = True
+            else:
+                # אם שרת לא מחזיר רשימה — ננסה נפילה חיננית לסינון לקוח
+                self.server_connected = data is not None
+                cars = self._client_side_filter(self.all_cars_data)
+        else:
+            cars = self._client_side_filter(self.all_cars_data)
+
+        # הצגה
+        self.cards_list.set_cars(cars)
+        self._last_shown_cars = cars  # לשימושי טופ-בר
+        available = sum(1 for c in cars if c.get("available", True))
+        self.topbar.update_status(self.server_connected, available)
+
+    def _client_side_filter(self, cars_in: List[Dict]) -> List[Dict]:
+        cars = list(cars_in)
+
         q = self.filters.free_search.text().strip().lower()
         if q:
-            cars = [c for c in cars if any(
-                q in str(c.get(k, "")).lower()
-                for k in ("make", "model", "car_type", "supplier", "location")
-            )]
+            cars = [c for c in cars if any(q in str(c.get(k, "")).lower() for k in ("make","model","car_type","supplier","location"))]
 
-        # גודל
         size = self.filters.size_combo.currentText()
         if size != "הכל":
-            norm = {"Small":"small","Medium":"medium","Large":"large","compact":"small","family":"medium","suv":"large","luxury":"large"}
+            norm = {"Small":"small","Medium":"medium","Large":"large",
+                    "compact":"small","family":"medium","suv":"large","luxury":"large"}
             cars = [c for c in cars if norm.get(str(c.get("car_type","")).lower(), str(c.get("car_type","")).lower()) == norm[size]]
 
-        # ספק
         supplier = self.filters.supplier_combo.currentText()
         if supplier != "הכל":
             cars = [c for c in cars if c.get("supplier") == supplier]
 
-        # מחיר
         price = self.filters.price_combo.currentText()
         if price != "כל מחיר":
-            def in_range(v):
-                v = c.get("daily_rate", 0)
-                if "עד 200" in price: return v <= 200
-                if "200-300" in price: return 200 < v <= 300
-                if "300-400" in price: return 300 < v <= 400
-                if "מעל 400" in price: return v > 400
-                return True
-            filtered = []
+            out = []
             for c in cars:
                 v = c.get("daily_rate", 0)
                 if ("עד 200" in price and v <= 200) or \
                    ("200-300" in price and 200 < v <= 300) or \
                    ("300-400" in price and 300 < v <= 400) or \
                    ("מעל 400" in price and v > 400):
-                    filtered.append(c)
-            cars = filtered
+                    out.append(c)
+            cars = out
 
-        self.cards_list.set_cars(cars)
+        # (תאריכים – אופציונלי בצד הלקוח: כאן לא סיננו לפי תאריכים כי זה תלוי לוגיקה עסקית)
+        return cars
 
-    # ---------- Booking ----------
+    # ---------- הזמנה ----------
     def on_car_booked(self, car: Dict):
         dlg = BookingDialog(car, self)
         if dlg.exec() == QDialog.Accepted:
             QMessageBox.information(self, "הזמנה", "ההזמנה נשלחה בהצלחה!")
 
 
-# ========== דוגמה להרצה מקומית ==========
+# ========== הרצה ==========
 if __name__ == "__main__":
     import sys
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("השכרת רכבים")
     w = CarsWidget()
-    w.resize(1200, 800)
+    w.resize(1280, 840)
     w.show()
     sys.exit(app.exec())

@@ -1,0 +1,96 @@
+{
+    "cars": [
+        {
+            "make": "Toyota",
+            "model": "Corolla",
+            "year": 2022,
+            "car_type": "Sedan",
+            "transmission": "Automatic",
+            "daily_rate": 180.0,
+            "location": "Tel Aviv",
+            "fuel_type": "Petrol",
+            "seats": 5,
+            "image_url": "https://example.com/toyota_corolla.jpg",
+            "features": [
+                "Air Conditioning",
+                "Bluetooth",
+                "Rear Camera"
+            ],
+            "id": 1
+        },
+        {
+            "make": "Hyundai",
+            "model": "Tucson",
+            "year": 2021,
+            "car_type": "SUV",
+            "transmission": "Automatic",
+            "daily_rate": 250.0,
+            "location": "Jerusalem",
+            "fuel_type": "Hybrid",
+            "seats": 5,
+            "image_url": "https://example.com/hyundai_tucson.jpg",
+            "features": [
+                "Navigation",
+                "Cruise Control",
+                "Heated Seats"
+            ],
+            "id": 2
+        },
+        {
+            "make": "Mazda",
+            "model": "3",
+            "year": 2020,
+            "car_type": "Hatchback",
+            "transmission": "Manual",
+            "daily_rate": 160.0,
+            "location": "Haifa",
+            "fuel_type": "Petrol",
+            "seats": 5,
+            "image_url": "https://example.com/mazda_3.jpg",
+            "features": [
+                "Air Conditioning",
+                "Bluetooth",
+                "Keyless Entry"
+            ],
+            "id": 3
+        },
+        {
+            "make": "Kia",
+            "model": "Sportage",
+            "year": 2023,
+            "car_type": "SUV",
+            "transmission": "Automatic",
+            "daily_rate": 270.0,
+            "location": "Eilat",
+            "fuel_type": "Diesel",
+            "seats": 5,
+            "image_url": "https://example.com/kia_sportage.jpg",
+            "features": [
+                "Panoramic Sunroof",
+                "Leather Seats",
+                "Parking Sensors"
+            ],
+            "id": 4
+        },
+        {
+            "make": "Tesla",
+            "model": "Model 3",
+            "year": 2022,
+            "car_type": "Sedan",
+            "transmission": "Automatic",
+            "daily_rate": 350.0,
+            "location": "Herzliya",
+            "fuel_type": "Electric",
+            "seats": 5,
+            "image_url": "https://example.com/tesla_model3.jpg",
+            "features": [
+                "Autopilot",
+                "Touchscreen Display",
+                "Wireless Charging"
+            ],
+            "id": 5
+        }
+    ],
+    "customers": [],
+    "users": []
+}
